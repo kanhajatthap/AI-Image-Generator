@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 const MODEL_OPTIONS = [
@@ -17,6 +18,8 @@ export default function Home() {
   const [image, setImage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<{ name: string; email: string } | null>(null);
 
   const effectiveModel = model === "__custom__" ? customModel.trim() : model;
 
@@ -25,6 +28,26 @@ export default function Home() {
       if (image) URL.revokeObjectURL(image);
     };
   }, [image]);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!res.ok) {
+          setCurrentUser(null);
+          return;
+        }
+        const json = await res.json();
+        setCurrentUser(json?.user || null);
+      } catch {
+        setCurrentUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    loadUser();
+  }, []);
 
   const generateImage = async () => {
     if (!prompt.trim()) {
@@ -75,6 +98,11 @@ export default function Home() {
     }
   };
 
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setCurrentUser(null);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <header className="border-b border-zinc-200 bg-white/85 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/85">
@@ -86,6 +114,24 @@ export default function Home() {
           <nav className="flex items-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
             <a href="#generator" className="hover:text-zinc-900 dark:hover:text-white">Generator</a>
             <a href="#result" className="hover:text-zinc-900 dark:hover:text-white">Result</a>
+            <Link href="/history" className="hover:text-zinc-900 dark:hover:text-white">History</Link>
+            {!authLoading && !currentUser && (
+              <>
+                <Link href="/login" className="hover:text-zinc-900 dark:hover:text-white">Login</Link>
+                <Link href="/signup" className="hover:text-zinc-900 dark:hover:text-white">Signup</Link>
+              </>
+            )}
+            {!authLoading && currentUser && (
+              <>
+                <span className="max-w-40 truncate text-zinc-800 dark:text-zinc-200">{currentUser.name}</span>
+                <button
+                  onClick={logout}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                >
+                  Logout
+                </button>
+              </>
+            )}
             <a
               href="https://github.com/"
               target="_blank"

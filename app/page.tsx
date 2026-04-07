@@ -110,6 +110,7 @@ export default function Home() {
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Portfolio Project</p>
             <h1 className="text-lg font-semibold">AI Image Generator</h1>
+            <p className="text-sm uppercase tracking-[0.2em] text-zinc-500">A futuristic cyberpunk city at sunset</p>
           </div>
           <nav className="flex items-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
             <a href="#generator" className="hover:text-zinc-900 dark:hover:text-white">Generator</a>

@@ -23,7 +23,7 @@ export async function GET() {
   await db.collection("image_history").createIndex({ userId: 1, createdAt: -1 });
   const rows = await db
     .collection("image_history")
-    .find({ userId })
+    .find({ userId }, { projection: { prompt: 1, model: 1, mimeType: 1, createdAt: 1 } })
     .sort({ createdAt: -1 })
     .toArray();
 
@@ -32,7 +32,6 @@ export async function GET() {
     prompt: row.prompt,
     model: row.model,
     mimeType: row.mimeType || "image/png",
-    imageBase64: row.imageBase64,
     createdAt: row.createdAt,
   }));
 

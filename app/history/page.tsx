@@ -33,7 +33,17 @@ export default function HistoryPage() {
       }
 
       const json = await res.json();
-      setItems(Array.isArray(json?.items) ? json.items : []);
+      const list = Array.isArray(json?.items) ? json.items : [];
+      // This page expects full image payload; fetch items individually.
+      const full = await Promise.all(
+        list.map(async (x: { id: string }) => {
+          const r = await fetch(`/api/history/${x.id}`, { cache: "no-store" });
+          if (!r.ok) return null;
+          const j = await r.json();
+          return j?.item || null;
+        }),
+      );
+      setItems(full.filter(Boolean));
     } catch {
       setError("Network error while loading history.");
     } finally {
@@ -86,7 +96,7 @@ export default function HistoryPage() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
         {items.map((item) => {
-          const imageSrc = `data:${item.mimeType};base64,${item.imageBase64}`;
+          const imageSrc = `/api/history/${item.id}/image`;
           const created = new Date(item.createdAt).toLocaleString();
           return (
             <article key={item.id} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">

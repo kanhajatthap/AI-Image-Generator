@@ -23,13 +23,27 @@ export async function GET() {
   await db.collection("image_history").createIndex({ userId: 1, createdAt: -1 });
   const rows = await db
     .collection("image_history")
-    .find({ userId }, { projection: { prompt: 1, model: 1, mimeType: 1, createdAt: 1 } })
+    .find(
+      { userId },
+      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1 } },
+    )
     .sort({ createdAt: -1 })
     .toArray();
+
+  rows.sort((a: any, b: any) => {
+    const ap = a?.pinned ? 1 : 0;
+    const bp = b?.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    const ad = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+    const bd = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+    return bd - ad;
+  });
 
   const items = rows.map((row) => ({
     id: String(row._id),
     prompt: row.prompt,
+    title: row.title,
+    pinned: !!row.pinned,
     model: row.model,
     mimeType: row.mimeType || "image/png",
     createdAt: row.createdAt,
@@ -86,6 +100,42 @@ export async function DELETE(req: Request) {
   });
 
   if (!result.deletedCount) {
+    return NextResponse.json({ error: "History item not found." }, { status: 404 });
+  }
+
+  return NextResponse.json({ success: true }, { status: 200 });
+}
+
+export async function PATCH(req: Request) {
+  const userId = await getSessionUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => null);
+  const id = typeof body?.id === "string" ? body.id : "";
+  const title = typeof body?.title === "string" ? body.title.trim() : null;
+  const pinned = typeof body?.pinned === "boolean" ? body.pinned : null;
+
+  if (!id || !ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Invalid history id." }, { status: 400 });
+  }
+
+  if (title === null && pinned === null) {
+    return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
+  }
+
+  const $set: Record<string, unknown> = { updatedAt: new Date() };
+  if (title !== null) $set.title = title;
+  if (pinned !== null) $set.pinned = pinned;
+
+  const db = await getDb();
+  const result = await db.collection("image_history").updateOne(
+    { _id: new ObjectId(id), userId },
+    { $set },
+  );
+
+  if (!result.matchedCount) {
     return NextResponse.json({ error: "History item not found." }, { status: 404 });
   }
 

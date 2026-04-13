@@ -18,6 +18,7 @@ export default function Home() {
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageModel[]>([]);
   const [busy, setBusy] = useState(false);
+  const [rateLimitUntil, setRateLimitUntil] = useState<number | null>(null);
   const [authUser, setAuthUser] = useState<{ name: string; email: string } | null>(null);
 
   const isLoggedIn = !!authUser;
@@ -39,13 +40,16 @@ export default function Home() {
       return;
     }
     const json = await res.json();
-    const items: Array<{ id: string; prompt: string; createdAt: string }> = Array.isArray(json?.items)
+    const items: Array<{ id: string; prompt: string; title?: string; pinned?: boolean; createdAt: string }> =
+      Array.isArray(json?.items)
       ? json.items
       : [];
     setHistory(
       items.map((x) => ({
         id: x.id,
         prompt: x.prompt,
+        title: x.title,
+        pinned: x.pinned,
         createdAt: x.createdAt,
       })),
     );
@@ -94,9 +98,48 @@ export default function Home() {
     if (activeHistoryId === id) newChat();
   };
 
-  const canSend = useMemo(() => isLoggedIn && !busy, [isLoggedIn, busy]);
+  const renameHistory = async (id: string, title: string) => {
+    const res = await fetch("/api/history", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, title }),
+    });
+    if (!res.ok) return;
+    setHistory((prev) => prev.map((x) => (x.id === id ? { ...x, title } : x)));
+  };
+
+  const togglePinHistory = async (id: string) => {
+    const current = history.find((x) => x.id === id);
+    const pinned = !current?.pinned;
+    const res = await fetch("/api/history", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, pinned }),
+    });
+    if (!res.ok) return;
+    await loadHistoryList();
+  };
+
+  const canSend = useMemo(() => {
+    const now = Date.now();
+    const isRateLimited = rateLimitUntil !== null && now < rateLimitUntil;
+    return isLoggedIn && !busy && !isRateLimited;
+  }, [isLoggedIn, busy, rateLimitUntil]);
 
   const sendPrompt = async (prompt: string) => {
+    // Prevent multiple concurrent requests
+    if (busy) {
+      console.log("Request already in progress, ignoring duplicate.");
+      return;
+    }
+
+    // Check rate limit cooldown
+    if (rateLimitUntil !== null && Date.now() < rateLimitUntil) {
+      const secondsLeft = Math.ceil((rateLimitUntil - Date.now()) / 1000);
+      console.log(`Rate limit cooldown active. Please wait ${secondsLeft} seconds.`);
+      return;
+    }
+
     if (!isLoggedIn) {
       setMessages((prev) => [
         ...prev,
@@ -126,34 +169,67 @@ export default function Home() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, model: DEFAULT_MODEL }),
+        body: JSON.stringify({ prompt, model: DEFAULT_MODEL, historyId: activeHistoryId }),
       });
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        const msg = json?.error || "Failed to generate image.";
+        const msg = json?.error || "Failed to generate.";
+        const details = json?.details || "";
+        console.error("API Error:", { status: res.status, error: msg, details, fullResponse: json });
+
+        // Handle 429 rate limit with user-friendly message and 15-second cooldown
+        if (res.status === 429) {
+          const cooldownMs = 15000; // 15 seconds
+          setRateLimitUntil(Date.now() + cooldownMs);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === typingMsg.id
+                ? { ...m, typing: false, content: "Rate limit reached. Please wait 15 seconds before trying again." }
+                : m
+            ),
+          );
+          // Clear cooldown after 15 seconds
+          setTimeout(() => setRateLimitUntil(null), cooldownMs);
+          return;
+        }
+
         setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: `${msg}${details ? ` (${details})` : ""}` } : m)),
         );
         return;
       }
 
-      const contentType = res.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
-        const json = await res.json();
+      // Parse JSON response from Pollinations API
+      const json = await res.json();
+      const newHistoryId = json.historyId || null;
+
+      if (json.type === "image") {
+        // Display image from URL
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? { ...m, typing: false, imageUrl: json.url } : m,
+          ),
+        );
+      } else if (json.type === "text") {
+        // Display text response
         setMessages((prev) =>
           prev.map((m) =>
             m.id === typingMsg.id ? { ...m, typing: false, content: json.text } : m,
           ),
         );
       } else {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        // Fallback for unexpected response format
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === typingMsg.id ? { ...m, typing: false, imageUrl: url } : m,
+            m.id === typingMsg.id ? { ...m, typing: false, content: "Unexpected response format." } : m,
           ),
         );
+      }
+
+      // Set active history ID for new conversations so follow-ups stay in same thread
+      if (newHistoryId && !activeHistoryId) {
+        setActiveHistoryId(newHistoryId);
       }
 
       // Refresh sidebar history (new item created server-side in /api/generate)
@@ -177,6 +253,11 @@ export default function Home() {
           activeId={activeHistoryId}
           onNewChat={newChat}
           onSelect={openHistory}
+          onDelete={deleteHistory}
+          onRename={renameHistory}
+          onTogglePin={togglePinHistory}
+          authUser={authUser}
+          onLogout={logout}
         />
 
         <div className="flex h-full flex-1 flex-col">
@@ -189,12 +270,12 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-3 text-sm">
               <Link href="/history" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
-                History
+                Images
               </Link>
               <Link href="/settings" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
                 Settings
               </Link>
-              {!authUser ? (
+              {!authUser && (
                 <div className="flex items-center gap-2">
                   <Link href="/login" className="rounded-lg border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
                     Login
@@ -202,17 +283,6 @@ export default function Home() {
                   <Link href="/signup" className="rounded-lg bg-zinc-900 px-3 py-1.5 text-white dark:bg-zinc-100 dark:text-zinc-950">
                     Sign up
                   </Link>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span className="max-w-40 truncate text-xs text-zinc-600 dark:text-zinc-300">{authUser.name}</span>
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="rounded-lg border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-                  >
-                    Logout
-                  </button>
                 </div>
               )}
             </div>

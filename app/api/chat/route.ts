@@ -6,25 +6,23 @@ import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Helper to check if prompt is asking for an image
+function isImagePrompt(prompt: string): boolean {
+  const imageKeywords = /\b(image|photo|picture|generate|create|draw|paint|sketch|illustration)\b/i;
+  return imageKeywords.test(prompt);
+}
+
+// Helper to encode prompt for URL
+function encodePrompt(prompt: string): string {
+  return encodeURIComponent(prompt);
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
-  const model = typeof body?.model === "string" ? body.model.trim() : "";
 
-  if (!prompt || !model) {
-    return NextResponse.json({ error: "Missing prompt or model." }, { status: 400 });
-  }
-
-  const token =
-    process.env.HUGGINGFACE_API_TOKEN ||
-    process.env.HF_TOKEN ||
-    process.env.HF_API_TOKEN;
-
-  if (!token) {
-    return NextResponse.json(
-      { error: "Missing Hugging Face token." },
-      { status: 500 }
-    );
+  if (!prompt) {
+    return NextResponse.json({ error: "Missing prompt." }, { status: 400 });
   }
 
   try {
@@ -36,94 +34,83 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Please login to generate." }, { status: 401 });
     }
 
-    const isImageRequest = /(generate|create image|draw|imagine)/i.test(prompt);
+    const shouldGenerateImage = isImagePrompt(prompt);
+    const encodedPrompt = encodePrompt(prompt);
 
-    if (isImageRequest) {
-      const hfRes = await fetch(`https://router.huggingface.co/hf-inference/models/${model}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "image/png",
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          options: { wait_for_model: true },
-        }),
-      });
+    if (shouldGenerateImage) {
+      // Generate image using Pollinations AI
+      const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}`;
 
-      if (!hfRes.ok) {
-        const detailsText = await hfRes.text().catch(() => "");
+      // Fetch the image
+      const imageRes = await fetch(imageUrl);
+
+      if (!imageRes.ok) {
         return NextResponse.json(
-          { error: "Hugging Face image generation failed.", details: detailsText },
-          { status: hfRes.status },
+          { error: "Image generation failed.", details: `Pollinations returned ${imageRes.status}` },
+          { status: imageRes.status }
         );
       }
 
-      const contentType = hfRes.headers.get("content-type") || "image/png";
-      const bytes = await hfRes.arrayBuffer();
+      const contentType = imageRes.headers.get("content-type") || "image/png";
+      const bytes = await imageRes.arrayBuffer();
       const buffer = Buffer.from(bytes);
 
+      // Save to history
       const db = await getDb();
       const history = db.collection("image_history");
       await history.createIndex({ userId: 1, createdAt: -1 });
       await history.insertOne({
         userId: session.userId,
         prompt,
-        model,
+        model: "pollinations-image",
         mimeType: contentType,
         imageBase64: buffer.toString("base64"),
         createdAt: new Date(),
       });
 
-      return new Response(buffer, {
-        status: 200,
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "no-store",
-        },
-      });
-    } else {
-      const textModel = "HuggingFaceH4/zephyr-7b-beta";
-      const hfRes = await fetch(`https://router.huggingface.co/hf-inference/models/${textModel}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: textModel,
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 500,
-        }),
-      });
+      // Return JSON response with image type
+      return NextResponse.json({
+        type: "image",
+        url: imageUrl,
+      }, { status: 200 });
 
-      if (!hfRes.ok) {
-        const detailsText = await hfRes.text().catch(() => "");
+    } else {
+      // Generate text using Pollinations AI
+      const textUrl = `https://text.pollinations.ai/${encodedPrompt}`;
+
+      const textRes = await fetch(textUrl);
+
+      if (!textRes.ok) {
         return NextResponse.json(
-          { error: "Hugging Face text generation failed.", details: detailsText },
-          { status: hfRes.status },
+          { error: "Text generation failed.", details: `Pollinations returned ${textRes.status}` },
+          { status: textRes.status }
         );
       }
 
-      const json = await hfRes.json();
-      const generatedText = json.choices?.[0]?.message?.content || "No response generated.";
+      const generatedText = await textRes.text();
 
+      // Save to history
       const db = await getDb();
       const history = db.collection("image_history");
       await history.createIndex({ userId: 1, createdAt: -1 });
       await history.insertOne({
         userId: session.userId,
         prompt,
-        model: textModel,
+        model: "pollinations-text",
         mimeType: "text/plain",
         generatedText,
         createdAt: new Date(),
       });
 
-      return NextResponse.json({ text: generatedText }, { status: 200 });
+      // Return JSON response with text type
+      return NextResponse.json({
+        type: "text",
+        text: generatedText,
+      }, { status: 200 });
     }
+
   } catch (e) {
+    console.error("Pollinations API error:", e);
     return NextResponse.json(
       { error: "Server error.", details: String(e) },
       { status: 500 },

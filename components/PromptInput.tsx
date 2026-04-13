@@ -19,7 +19,7 @@ export function PromptInput({
   };
 
   const onKeyDown = async (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !disabled) {
       e.preventDefault();
       await send();
     }

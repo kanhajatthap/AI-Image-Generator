@@ -1,15 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { ChatMessage, ChatMessageModel } from "./ChatMessage";
+import { ChatMessage, ChatMessageModel, ImageSettings } from "./ChatMessage";
+
+interface ChatWindowProps {
+  messages: ChatMessageModel[];
+  onDeleteHistory: (historyId: string) => Promise<void>;
+  onRegenerate?: (prompt: string, settings: ImageSettings) => Promise<void>;
+  onGenerateSimilar?: (prompt: string, settings: ImageSettings) => Promise<void>;
+}
 
 export function ChatWindow({
   messages,
   onDeleteHistory,
-}: {
-  messages: ChatMessageModel[];
-  onDeleteHistory: (historyId: string) => Promise<void>;
-}) {
+  onRegenerate,
+  onGenerateSimilar,
+}: ChatWindowProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const hasMessages = messages.length > 0;
@@ -41,6 +47,8 @@ export function ChatWindow({
               onDeleteHistory={
                 m.historyId ? () => onDeleteHistory(m.historyId!) : undefined
               }
+              onRegenerate={onRegenerate}
+              onGenerateSimilar={onGenerateSimilar}
             />
           ))}
         </div>

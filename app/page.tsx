@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Sidebar, type HistoryListItem } from "../components/Sidebar";
 import { ChatWindow } from "../components/ChatWindow";
-import type { ChatMessageModel } from "../components/ChatMessage";
-import { PromptInput } from "../components/PromptInput";
+import type { ChatMessageModel, ImageSettings } from "../components/ChatMessage";
+import { PromptInput, PromptInputOptions } from "../components/PromptInput";
 
 const DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell";
 
@@ -126,7 +126,25 @@ export default function Home() {
     return isLoggedIn && !busy && !isRateLimited;
   }, [isLoggedIn, busy, rateLimitUntil]);
 
-  const sendPrompt = async (prompt: string) => {
+  const enhancePrompt = async (prompt: string): Promise<string> => {
+    const res = await fetch(`/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: `Enhance this image generation prompt to be more detailed and descriptive, add artistic details and lighting information. Original prompt: "${prompt}". Return only the enhanced prompt text without any explanations.`,
+        model: DEFAULT_MODEL,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to enhance prompt");
+    }
+
+    const json = await res.json();
+    return json.text || prompt;
+  };
+
+  const sendPrompt = async (options: PromptInputOptions) => {
     // Prevent multiple concurrent requests
     if (busy) {
       console.log("Request already in progress, ignoring duplicate.");
@@ -153,6 +171,8 @@ export default function Home() {
       return;
     }
 
+    const { prompt, width, height, seed, model, style } = options;
+
     const now = new Date().toISOString();
     const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
     const typingMsg: ChatMessageModel = {
@@ -169,7 +189,16 @@ export default function Home() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, model: DEFAULT_MODEL, historyId: activeHistoryId }),
+        body: JSON.stringify({
+          prompt,
+          model: DEFAULT_MODEL,
+          historyId: activeHistoryId,
+          width,
+          height,
+          seed,
+          model_type: model,
+          style,
+        }),
       });
 
       if (!res.ok) {
@@ -203,12 +232,19 @@ export default function Home() {
       // Parse JSON response from Pollinations API
       const json = await res.json();
       const newHistoryId = json.historyId || null;
+      const returnedSettings = json.settings || {};
 
       if (json.type === "image") {
-        // Display image from URL
+        // Display image from URL with settings for regeneration
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === typingMsg.id ? { ...m, typing: false, imageUrl: json.url } : m,
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              imageUrl: json.url,
+              settings: returnedSettings,
+              prompt: prompt,
+            } : m,
           ),
         );
       } else if (json.type === "text") {
@@ -243,6 +279,140 @@ export default function Home() {
     await fetch("/api/auth/logout", { method: "POST" });
     setAuthUser(null);
     newChat();
+  };
+
+  // Regenerate image with same settings
+  const handleRegenerate = async (prompt: string, settings: ImageSettings) => {
+    if (busy) return;
+
+    const now = new Date().toISOString();
+    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
+    const typingMsg: ChatMessageModel = {
+      id: uid(),
+      role: "assistant",
+      content: prompt,
+      createdAt: now,
+      typing: true,
+    };
+    setMessages((prev) => [...prev, userMsg, typingMsg]);
+    setBusy(true);
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          model: DEFAULT_MODEL,
+          historyId: activeHistoryId,
+          width: settings.width,
+          height: settings.height,
+          seed: settings.seed,
+          model_type: settings.model,
+          style: settings.style,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg = json?.error || "Failed to regenerate.";
+        setMessages((prev) =>
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+        );
+        return;
+      }
+
+      const json = await res.json();
+      const newHistoryId = json.historyId || null;
+
+      if (json.type === "image") {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              imageUrl: json.url,
+              settings: json.settings,
+              prompt: prompt,
+            } : m,
+          ),
+        );
+      }
+
+      if (newHistoryId && !activeHistoryId) {
+        setActiveHistoryId(newHistoryId);
+      }
+      await loadHistoryList();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Generate similar image with new seed
+  const handleGenerateSimilar = async (prompt: string, settings: ImageSettings) => {
+    if (busy) return;
+
+    const now = new Date().toISOString();
+    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
+    const typingMsg: ChatMessageModel = {
+      id: uid(),
+      role: "assistant",
+      content: `${prompt} (similar)`,
+      createdAt: now,
+      typing: true,
+    };
+    setMessages((prev) => [...prev, userMsg, typingMsg]);
+    setBusy(true);
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          model: DEFAULT_MODEL,
+          historyId: activeHistoryId,
+          width: settings.width,
+          height: settings.height,
+          seed: settings.seed,
+          model_type: settings.model,
+          style: settings.style,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg = json?.error || "Failed to generate similar image.";
+        setMessages((prev) =>
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+        );
+        return;
+      }
+
+      const json = await res.json();
+      const newHistoryId = json.historyId || null;
+
+      if (json.type === "image") {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              imageUrl: json.url,
+              settings: json.settings,
+              prompt: prompt,
+            } : m,
+          ),
+        );
+      }
+
+      if (newHistoryId && !activeHistoryId) {
+        setActiveHistoryId(newHistoryId);
+      }
+      await loadHistoryList();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -288,9 +458,14 @@ export default function Home() {
             </div>
           </header>
 
-          <ChatWindow messages={messages} onDeleteHistory={deleteHistory} />
+          <ChatWindow
+            messages={messages}
+            onDeleteHistory={deleteHistory}
+            onRegenerate={handleRegenerate}
+            onGenerateSimilar={handleGenerateSimilar}
+          />
 
-          <PromptInput onSend={sendPrompt} disabled={!canSend} />
+          <PromptInput onSend={sendPrompt} onEnhance={enhancePrompt} disabled={!canSend} />
 
           {!isLoggedIn && (
             <div className="border-t border-zinc-200 bg-zinc-50 px-4 py-2 text-center text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">

@@ -3,6 +3,14 @@
 import { ImageCard } from "./ImageCard";
 import { Loader } from "./Loader";
 
+export interface ImageSettings {
+  width?: number;
+  height?: number;
+  seed?: number;
+  model?: string;
+  style?: string;
+}
+
 export type ChatMessageModel = {
   id: string;
   role: "user" | "assistant";
@@ -11,15 +19,23 @@ export type ChatMessageModel = {
   createdAt: string;
   typing?: boolean;
   historyId?: string;
+  settings?: ImageSettings;
+  prompt?: string;
 };
+
+interface ChatMessageProps {
+  message: ChatMessageModel;
+  onDeleteHistory?: (historyId: string) => Promise<void>;
+  onRegenerate?: (prompt: string, settings: ImageSettings) => Promise<void>;
+  onGenerateSimilar?: (prompt: string, settings: ImageSettings) => Promise<void>;
+}
 
 export function ChatMessage({
   message,
   onDeleteHistory,
-}: {
-  message: ChatMessageModel;
-  onDeleteHistory?: (historyId: string) => Promise<void>;
-}) {
+  onRegenerate,
+  onGenerateSimilar,
+}: ChatMessageProps) {
   const isUser = message.role === "user";
 
   return (
@@ -39,13 +55,16 @@ export function ChatMessage({
 
         {message.imageUrl && !message.typing && (
           <ImageCard
-            prompt={message.content}
+            prompt={message.prompt || message.content}
             imageUrl={message.imageUrl}
+            settings={message.settings}
             onDelete={
               message.historyId && onDeleteHistory
                 ? () => onDeleteHistory(message.historyId!)
                 : undefined
             }
+            onRegenerate={onRegenerate}
+            onGenerateSimilar={onGenerateSimilar}
           />
         )}
 

@@ -18,6 +18,22 @@ function encodePrompt(prompt: string): string {
   return encodeURIComponent(prompt);
 }
 
+// Helper to enhance prompt with style
+function enhancePromptWithStyle(prompt: string, style?: string): string {
+  if (!style || style === "none") return prompt;
+  return `${prompt}, ${style} style, highly detailed, cinematic lighting`;
+}
+
+// Image settings interface
+interface ImageSettings {
+  width?: number;
+  height?: number;
+  seed?: number;
+  model?: string;
+  style?: string;
+  enhance?: boolean;
+}
+
 export async function GET() {
   return NextResponse.json({
     status: "ok",
@@ -34,6 +50,16 @@ export async function POST(req: Request) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   const historyId = typeof body?.historyId === "string" ? body.historyId.trim() : null;
 
+  // Extract image settings from request
+  const settings: ImageSettings = {
+    width: typeof body?.width === "number" ? body.width : undefined,
+    height: typeof body?.height === "number" ? body.height : undefined,
+    seed: typeof body?.seed === "number" ? body.seed : undefined,
+    model: typeof body?.model_type === "string" ? body.model_type : (typeof body?.model === "string" ? body.model : "flux"),
+    style: typeof body?.style === "string" ? body.style : undefined,
+    enhance: typeof body?.enhance === "boolean" ? body.enhance : false,
+  };
+
   if (!prompt) {
     return NextResponse.json({ error: "Missing prompt." }, { status: 400 });
   }
@@ -48,11 +74,21 @@ export async function POST(req: Request) {
     }
 
     const shouldGenerateImage = isImagePrompt(prompt);
-    const encodedPrompt = encodePrompt(prompt);
+
+    // Apply style enhancement if provided
+    const finalPrompt = settings.style ? enhancePromptWithStyle(prompt, settings.style) : prompt;
+    const encodedPrompt = encodePrompt(finalPrompt);
 
     if (shouldGenerateImage) {
-      // Generate image using Pollinations AI
-      const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}`;
+      // Build image URL with query parameters
+      const queryParams = new URLSearchParams();
+      if (settings.width) queryParams.set("width", settings.width.toString());
+      if (settings.height) queryParams.set("height", settings.height.toString());
+      if (settings.seed !== undefined) queryParams.set("seed", settings.seed.toString());
+      if (settings.model) queryParams.set("model", settings.model);
+
+      const queryString = queryParams.toString();
+      const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}${queryString ? `?${queryString}` : ""}`;
 
       // Fetch the image
       const imageRes = await fetch(imageUrl);
@@ -114,11 +150,18 @@ export async function POST(req: Request) {
         resultHistoryId = result.insertedId.toString();
       }
 
-      // Return JSON response with image type
+      // Return JSON response with image type and settings
       return NextResponse.json({
         type: "image",
         url: imageUrl,
-        historyId: resultHistoryId
+        historyId: resultHistoryId,
+        settings: {
+          width: settings.width,
+          height: settings.height,
+          seed: settings.seed,
+          model: settings.model,
+          style: settings.style,
+        }
       }, { status: 200 });
 
     } else {

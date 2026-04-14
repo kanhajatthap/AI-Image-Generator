@@ -171,7 +171,7 @@ export default function Home() {
       return;
     }
 
-    const { prompt, width, height, seed, model, style } = options;
+    const { prompt } = options;
 
     const now = new Date().toISOString();
     const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
@@ -186,19 +186,10 @@ export default function Home() {
     setBusy(true);
 
     try {
-      const res = await fetch("/api/generate", {
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          model: DEFAULT_MODEL,
-          historyId: activeHistoryId,
-          width,
-          height,
-          seed,
-          model_type: model,
-          style,
-        }),
+        body: JSON.stringify({ prompt }),
       });
 
       if (!res.ok) {
@@ -231,18 +222,16 @@ export default function Home() {
 
       // Parse JSON response from Pollinations API
       const json = await res.json();
-      const newHistoryId = json.historyId || null;
-      const returnedSettings = json.settings || {};
 
       if (json.type === "image") {
-        // Display image from URL with settings for regeneration
+        // Display image from URL
         setMessages((prev) =>
           prev.map((m) =>
             m.id === typingMsg.id ? {
               ...m,
               typing: false,
+              type: "image",
               imageUrl: json.url,
-              settings: returnedSettings,
               prompt: prompt,
             } : m,
           ),
@@ -251,7 +240,7 @@ export default function Home() {
         // Display text response
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === typingMsg.id ? { ...m, typing: false, content: json.text } : m,
+            m.id === typingMsg.id ? { ...m, typing: false, type: "text", content: json.text } : m,
           ),
         );
       } else {
@@ -262,14 +251,6 @@ export default function Home() {
           ),
         );
       }
-
-      // Set active history ID for new conversations so follow-ups stay in same thread
-      if (newHistoryId && !activeHistoryId) {
-        setActiveHistoryId(newHistoryId);
-      }
-
-      // Refresh sidebar history (new item created server-side in /api/generate)
-      await loadHistoryList();
     } finally {
       setBusy(false);
     }
@@ -331,6 +312,7 @@ export default function Home() {
             m.id === typingMsg.id ? {
               ...m,
               typing: false,
+              type: "image",
               imageUrl: json.url,
               settings: json.settings,
               prompt: prompt,
@@ -398,6 +380,75 @@ export default function Home() {
             m.id === typingMsg.id ? {
               ...m,
               typing: false,
+              type: "image",
+              imageUrl: json.url,
+              settings: json.settings,
+              prompt: prompt,
+            } : m,
+          ),
+        );
+      }
+
+      if (newHistoryId && !activeHistoryId) {
+        setActiveHistoryId(newHistoryId);
+      }
+      await loadHistoryList();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Create variation with modified seed
+  const handleCreateVariation = async (prompt: string, settings: ImageSettings) => {
+    if (busy) return;
+
+    const now = new Date().toISOString();
+    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
+    const typingMsg: ChatMessageModel = {
+      id: uid(),
+      role: "assistant",
+      content: `${prompt} (variation)`,
+      createdAt: now,
+      typing: true,
+    };
+    setMessages((prev) => [...prev, userMsg, typingMsg]);
+    setBusy(true);
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          model: DEFAULT_MODEL,
+          historyId: activeHistoryId,
+          width: settings.width,
+          height: settings.height,
+          seed: settings.seed,
+          model_type: settings.model,
+          style: settings.style,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg = json?.error || "Failed to create variation.";
+        setMessages((prev) =>
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+        );
+        return;
+      }
+
+      const json = await res.json();
+      const newHistoryId = json.historyId || null;
+
+      if (json.type === "image") {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              type: "image",
               imageUrl: json.url,
               settings: json.settings,
               prompt: prompt,
@@ -430,7 +481,7 @@ export default function Home() {
           onLogout={logout}
         />
 
-        <div className="flex h-full flex-1 flex-col">
+        <div className="flex h-full flex-1 flex-col overflow-hidden">
           <header className="flex items-center justify-between border-b border-zinc-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold">AI Image Generator</span>
@@ -439,6 +490,9 @@ export default function Home() {
               </span>
             </div>
             <div className="flex items-center gap-3 text-sm">
+              <Link href="/explore" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
+                Explore
+              </Link>
               <Link href="/history" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
                 Images
               </Link>
@@ -458,12 +512,7 @@ export default function Home() {
             </div>
           </header>
 
-          <ChatWindow
-            messages={messages}
-            onDeleteHistory={deleteHistory}
-            onRegenerate={handleRegenerate}
-            onGenerateSimilar={handleGenerateSimilar}
-          />
+          <ChatWindow messages={messages} />
 
           <PromptInput onSend={sendPrompt} onEnhance={enhancePrompt} disabled={!canSend} />
 

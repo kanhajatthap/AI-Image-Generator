@@ -1,6 +1,6 @@
 "use client";
 
-import { ImageCard } from "./ImageCard";
+import { useState, useEffect } from "react";
 import { Loader } from "./Loader";
 
 export interface ImageSettings {
@@ -15,6 +15,7 @@ export type ChatMessageModel = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  type?: "text" | "image";
   imageUrl?: string;
   createdAt: string;
   typing?: boolean;
@@ -25,18 +26,32 @@ export type ChatMessageModel = {
 
 interface ChatMessageProps {
   message: ChatMessageModel;
-  onDeleteHistory?: (historyId: string) => Promise<void>;
-  onRegenerate?: (prompt: string, settings: ImageSettings) => Promise<void>;
-  onGenerateSimilar?: (prompt: string, settings: ImageSettings) => Promise<void>;
 }
 
-export function ChatMessage({
-  message,
-  onDeleteHistory,
-  onRegenerate,
-  onGenerateSimilar,
-}: ChatMessageProps) {
+export function ChatMessage({ message }: ChatMessageProps) {
+  const [imageError, setImageError] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+
   const isUser = message.role === "user";
+  const promptText = message.prompt || message.content;
+
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setCopiedPrompt(true);
+      setTimeout(() => setCopiedPrompt(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const downloadImage = () => {
+    if (!message.imageUrl) return;
+    const link = document.createElement("a");
+    link.href = message.imageUrl;
+    link.download = `generated-${message.id}.png`;
+    link.click();
+  };
 
   return (
     <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
@@ -49,23 +64,50 @@ export function ChatMessage({
           "border border-zinc-200 dark:border-zinc-800",
         ].join(" ")}
       >
-        <div className="text-sm whitespace-pre-wrap leading-6">
-          {message.typing ? <Loader label="Generating..." /> : message.content}
-        </div>
+        {/* Text content - shown only when there's no image */}
+        {(!message.imageUrl || message.type === "text") && (
+          <div className="text-sm whitespace-pre-wrap leading-6">
+            {message.typing ? <Loader label="Generating..." /> : message.content}
+          </div>
+        )}
 
+        {/* Image - shown whenever imageUrl exists */}
         {message.imageUrl && !message.typing && (
-          <ImageCard
-            prompt={message.prompt || message.content}
-            imageUrl={message.imageUrl}
-            settings={message.settings}
-            onDelete={
-              message.historyId && onDeleteHistory
-                ? () => onDeleteHistory(message.historyId!)
-                : undefined
-            }
-            onRegenerate={onRegenerate}
-            onGenerateSimilar={onGenerateSimilar}
-          />
+          <div className="mt-2" key={message.imageUrl}>
+            {imageError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
+                Failed to load image.
+              </div>
+            )}
+            {!imageError && (
+              <>
+                <img
+                  src={message.imageUrl}
+                  alt="Generated image"
+                  className="max-w-full rounded-lg"
+                  onError={(e) => {
+                    console.error("Image failed to load:", e);
+                    setImageError(true);
+                  }}
+                />
+                {/* Action Buttons */}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={copyPrompt}
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  >
+                    {copiedPrompt ? "Copied!" : "Copy Prompt"}
+                  </button>
+                  <button
+                    onClick={downloadImage}
+                    className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                  >
+                    Download
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">

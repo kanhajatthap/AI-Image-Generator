@@ -94,7 +94,7 @@ export function Sidebar({
         <span className="text-[11px]">({items.length})</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-1">
+      <div className="sidebar-scroll flex-1 overflow-y-auto space-y-1">
         {items.map((item) => {
           const active = item.id === activeId;
           const label = item.title || item.prompt || "Untitled";
@@ -278,6 +278,9 @@ export function Sidebar({
         <nav className="flex flex-col gap-1">
           <Link href="/" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
             Home
+          </Link>
+          <Link href="/explore" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+            Explore
           </Link>
           <Link href="/history" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
             Images

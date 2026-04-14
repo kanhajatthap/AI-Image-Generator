@@ -11,7 +11,6 @@ export interface PromptInputOptions {
   height: number;
   seed?: number;
   model: string;
-  style: string;
 }
 
 interface PromptInputProps {
@@ -29,7 +28,8 @@ const DEFAULT_SETTINGS: ImageSettingsState = {
 export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
   const [value, setValue] = useState("");
   const [settings, setSettings] = useState<ImageSettingsState>(DEFAULT_SETTINGS);
-  const [style, setStyle] = useState("none");
+  const [templateValue, setTemplateValue] = useState("");
+  const [styleValue, setStyleValue] = useState("");
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -37,13 +37,14 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
     const prompt = value.trim();
     if (!prompt) return;
     setValue("");
+    setTemplateValue("");
+    setStyleValue("");
     await onSend({
       prompt,
       width: settings.width,
       height: settings.height,
       seed: settings.seed,
       model: settings.model,
-      style,
     });
   };
 
@@ -66,8 +67,19 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
     }
   };
 
-  const handleTemplateSelect = (templatePrompt: string) => {
+  const handleTemplateSelect = (templatePrompt: string, templateValue: string) => {
     setValue(templatePrompt);
+    setTemplateValue(templateValue);
+  };
+
+  const handleStyleApply = (styleSuffix: string, styleVal: string) => {
+    const currentPrompt = value.trim();
+    if (currentPrompt) {
+      setValue(`${currentPrompt}, ${styleSuffix}`);
+    } else {
+      setValue(styleSuffix);
+    }
+    setStyleValue(styleVal);
   };
 
   const randomizeSeed = () => {
@@ -76,8 +88,11 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
 
   return (
     <div className="border-t border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
-      {/* Prompt Templates */}
-      <PromptTemplates onSelect={handleTemplateSelect} />
+      {/* Template and Style Bar */}
+      <div className="flex flex-wrap items-center gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+        <PromptTemplates onSelect={(prompt) => handleTemplateSelect(prompt, "")} value={templateValue} />
+        <StylePresets onApply={(suffix) => handleStyleApply(suffix, "")} value={styleValue} />
+      </div>
 
       {/* Settings Bar */}
       <div className="flex flex-wrap items-center justify-between border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
@@ -93,7 +108,6 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
             </svg>
             Settings
           </button>
-          <StylePresets selectedStyle={style} onChange={setStyle} />
         </div>
         <div className="flex items-center gap-2">
           {onEnhance && (

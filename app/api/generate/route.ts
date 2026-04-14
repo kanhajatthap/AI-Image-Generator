@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   const settings: ImageSettings = {
     width: typeof body?.width === "number" ? body.width : undefined,
     height: typeof body?.height === "number" ? body.height : undefined,
-    seed: typeof body?.seed === "number" ? body.seed : undefined,
+    seed: typeof body?.seed === "number" ? body.seed : Math.floor(Math.random() * 10000000),
     model: typeof body?.model_type === "string" ? body.model_type : (typeof body?.model === "string" ? body.model : "flux"),
     style: typeof body?.style === "string" ? body.style : undefined,
     enhance: typeof body?.enhance === "boolean" ? body.enhance : false,
@@ -127,6 +127,7 @@ export async function POST(req: Request) {
             $set: {
               imageBase64: buffer.toString("base64"),
               mimeType: contentType,
+              seed: settings.seed,
               updatedAt: new Date()
             },
           }
@@ -140,6 +141,7 @@ export async function POST(req: Request) {
           model: "pollinations-image",
           mimeType: contentType,
           imageBase64: buffer.toString("base64"),
+          seed: settings.seed,
           messages: [
             { role: "user", content: prompt, createdAt: new Date() },
             { role: "assistant", content: "Image generated", imageBase64: buffer.toString("base64"), createdAt: new Date() },

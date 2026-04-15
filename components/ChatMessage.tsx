@@ -15,7 +15,7 @@ export type ChatMessageModel = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  type?: "text" | "image";
+  type?: "text" | "image" | "vision";
   imageUrl?: string;
   createdAt: string;
   typing?: boolean;
@@ -31,8 +31,10 @@ interface ChatMessageProps {
 export function ChatMessage({ message }: ChatMessageProps) {
   const [imageError, setImageError] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [copiedText, setCopiedText] = useState(false);
 
   const isUser = message.role === "user";
+  const isVision = message.type === "vision";
   const promptText = message.prompt || message.content;
 
   const copyPrompt = async () => {
@@ -43,6 +45,26 @@ export function ChatMessage({ message }: ChatMessageProps) {
     } catch {
       // ignore
     }
+  };
+
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedText(true);
+      setTimeout(() => setCopiedText(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const downloadText = () => {
+    const blob = new Blob([message.content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "extracted-text.txt";
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const downloadImage = () => {
@@ -64,15 +86,35 @@ export function ChatMessage({ message }: ChatMessageProps) {
           "border border-zinc-200 dark:border-zinc-800",
         ].join(" ")}
       >
-        {/* Text content - shown only when there's no image */}
-        {(!message.imageUrl || message.type === "text") && (
-          <div className="text-sm whitespace-pre-wrap leading-6">
-            {message.typing ? <Loader label="Generating..." /> : message.content}
-          </div>
+        {/* Text content - shown for text and vision types, or when no image */}
+        {(!message.imageUrl || message.type === "text" || isVision) && (
+          <>
+            <div className="text-sm whitespace-pre-wrap leading-6">
+              {message.typing ? <Loader label="Generating..." /> : message.content}
+            </div>
+
+            {/* Vision action buttons */}
+            {isVision && !message.typing && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={copyText}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                >
+                  {copiedText ? "Copied!" : "Copy Text"}
+                </button>
+                <button
+                  onClick={downloadText}
+                  className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                >
+                  Download Text
+                </button>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Image - shown whenever imageUrl exists */}
-        {message.imageUrl && !message.typing && (
+        {/* Image - shown for image generation only, not for vision */}
+        {message.imageUrl && !isVision && !message.typing && (
           <div className="mt-2" key={message.imageUrl}>
             {imageError && (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
@@ -90,7 +132,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
                     setImageError(true);
                   }}
                 />
-                {/* Action Buttons */}
+                {/* Image action buttons */}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     onClick={copyPrompt}

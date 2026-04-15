@@ -171,10 +171,20 @@ export default function Home() {
       return;
     }
 
-    const { prompt } = options;
+    const { prompt, image } = options;
+    console.log("[PAGE] sendPrompt called with:", { prompt, hasImage: !!image });
+    if (image) {
+      console.log("[PAGE] Image details:", image.name, image.size, image.type);
+    }
 
     const now = new Date().toISOString();
-    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
+    const userMsg: ChatMessageModel = {
+      id: uid(),
+      role: "user",
+      content: prompt,
+      createdAt: now,
+      imageUrl: image ? URL.createObjectURL(image) : undefined,
+    };
     const typingMsg: ChatMessageModel = {
       id: uid(),
       role: "assistant",
@@ -186,11 +196,28 @@ export default function Home() {
     setBusy(true);
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
+      let res: Response;
+
+      if (image) {
+        console.log("[PAGE] Sending FormData request to /api/chat");
+        const formData = new FormData();
+        formData.append("prompt", prompt);
+        formData.append("image", image);
+        console.log("[PAGE] FormData prepared");
+        res = await fetch("/api/chat", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        console.log("[PAGE] Sending JSON request to /api/chat");
+        res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+      }
+
+      console.log("[PAGE] Response status:", res.status, res.statusText);
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
@@ -222,9 +249,10 @@ export default function Home() {
 
       // Parse JSON response from Pollinations API
       const json = await res.json();
+      console.log("[PAGE] API response:", json);
 
       if (json.type === "image") {
-        // Display image from URL
+        // Display generated image from URL
         setMessages((prev) =>
           prev.map((m) =>
             m.id === typingMsg.id ? {
@@ -232,6 +260,19 @@ export default function Home() {
               typing: false,
               type: "image",
               imageUrl: json.url,
+              prompt: prompt,
+            } : m,
+          ),
+        );
+      } else if (json.type === "vision") {
+        // Display OCR text only (no image)
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              type: "vision",
+              content: json.text,
               prompt: prompt,
             } : m,
           ),

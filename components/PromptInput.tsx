@@ -11,6 +11,7 @@ export interface PromptInputOptions {
   height: number;
   seed?: number;
   model: string;
+  image?: File;
 }
 
 interface PromptInputProps {
@@ -32,10 +33,15 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
   const [styleValue, setStyleValue] = useState("");
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
 
   const send = async () => {
     const prompt = value.trim();
-    if (!prompt) return;
+    if (!prompt && !selectedImage) return;
+    console.log("[PROMPT INPUT] Sending:", { prompt, hasImage: !!selectedImage });
+    if (selectedImage) {
+      console.log("[PROMPT INPUT] Image:", selectedImage.name, selectedImage.size, selectedImage.type);
+    }
     setValue("");
     setTemplateValue("");
     setStyleValue("");
@@ -45,7 +51,9 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
       height: settings.height,
       seed: settings.seed,
       model: settings.model,
+      image: selectedImage || undefined,
     });
+    setSelectedImage(null);
   };
 
   const handleEnhance = async () => {
@@ -143,6 +151,40 @@ export function PromptInput({ onSend, onEnhance, disabled }: PromptInputProps) {
           className="min-h-[48px] max-h-40 flex-1 resize-none rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-zinc-500"
           disabled={disabled}
         />
+        {/* Image Upload */}
+        <input
+          type="file"
+          accept="image/*"
+          id="image-upload"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) setSelectedImage(file);
+          }}
+        />
+        <label
+          htmlFor="image-upload"
+          className="cursor-pointer rounded-lg px-2 py-1.5 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+          title="Upload image for vision analysis"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </label>
+        {/* Selected Image Preview */}
+        {selectedImage && (
+          <div className="relative">
+            <img
+              src={URL.createObjectURL(selectedImage)}
+              alt="Selected"
+              className="h-10 w-10 rounded object-cover"
+            />
+            <button
+              onClick={() => setSelectedImage(null)}
+              className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div className="flex flex-col gap-2">
           <button
             type="button"

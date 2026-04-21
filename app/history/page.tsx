@@ -50,16 +50,8 @@ export default function HistoryPage() {
 
       const json = await res.json();
       const list = Array.isArray(json?.items) ? json.items : [];
-      // This page expects full image payload; fetch items individually.
-      const full = await Promise.all(
-        list.map(async (x: { id: string }) => {
-          const r = await fetch(`/api/history/${x.id}`, { cache: "no-store" });
-          if (!r.ok) return null;
-          const j = await r.json();
-          return j?.item || null;
-        }),
-      );
-      setItems(full.filter(Boolean).filter((item) => item.mimeType !== "text/plain" && item.imageBase64));
+      // Filter to only show images with base64 data
+      setItems(list.filter((item: HistoryItem) => item.imageBase64));
     } catch {
       setError("Network error while loading history.");
     } finally {
@@ -162,26 +154,52 @@ export default function HistoryPage() {
   }, []);
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-7xl px-6 py-10">
-      <div className="mb-6 flex items-center justify-between">
+    <main className="mx-auto min-h-screen w-full max-w-7xl px-6 py-12">
+      <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Images</h1>
+          <h1 className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">Generated Images</h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Your AI-generated image collection</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/explore" className="rounded border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
+          <Link href="/explore" className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-all duration-200 hover:border-gray-300 hover:bg-gray-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900">
             Explore
           </Link>
-          <Link href="/" className="rounded border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
-            Back
+          <Link href="/" className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30">
+            Back to Chat
           </Link>
         </div>
       </div>
 
-      {loading && <p>Loading images...</p>}
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <div className="flex items-center gap-3 text-zinc-500">
+            <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <span>Loading images...</span>
+          </div>
+        </div>
+      )}
       {!loading && error && <p className="font-medium text-red-600">{error}</p>}
 
       {!loading && !error && items.length === 0 && (
-        <p className="text-zinc-600 dark:text-zinc-400">No generated images yet.</p>
+        <div className="rounded-2xl border border-dashed border-gray-200 bg-white/60 p-16 text-center shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+          <div className="mb-4 flex justify-center">
+            <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-100 to-purple-100 shadow-inner dark:from-indigo-950/30 dark:to-purple-950/30">
+              <svg className="h-10 w-10 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          </div>
+          <p className="text-lg font-medium text-zinc-700 dark:text-zinc-300">No generated images yet</p>
+          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">Start creating images to see them here</p>
+          <Link href="/" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30">
+            Start Creating
+          </Link>
+        </div>
       )}
 
       {/* Masonry Grid Layout */}
@@ -191,7 +209,7 @@ export default function HistoryPage() {
             {column.map((item) => {
               const imageSrc = item.imageUrl || `/api/history/${item.id}/image`;
               return (
-                <div key={item.id} className="group relative overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900">
+                <div key={item.id} className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
                   {/* Image Container */}
                   <div className="relative overflow-hidden">
                     <Image
@@ -200,7 +218,7 @@ export default function HistoryPage() {
                       width={item.width || 1024}
                       height={item.height || 1024}
                       unoptimized
-                      className="h-auto w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      className="h-auto w-full object-cover transition-transform duration-500 group-hover:scale-110"
                     />
 
                     {/* Hover Overlay - ChatGPT Style */}
@@ -283,10 +301,13 @@ export default function HistoryPage() {
                     </div>
                   </div>
 
-                  {/* Card Footer: Prompt */}
+                  {/* Card Footer: Prompt and Date */}
                   <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
                     <p className="line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">
                       {item.prompt}
+                    </p>
+                    <p className="mt-1 text-[10px] text-zinc-400">
+                      {new Date(item.createdAt).toLocaleDateString()} {new Date(item.createdAt).toLocaleTimeString()}
                     </p>
                   </div>
                 </div>

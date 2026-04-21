@@ -79,13 +79,33 @@ export function ChatMessage({ message }: ChatMessageProps) {
     <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={[
-          "max-w-[80%] rounded-2xl px-4 py-3 shadow-sm",
+          "group relative max-w-[80%] rounded-2xl px-5 py-4 shadow-sm transition-all duration-200 hover:shadow-md",
           isUser
-            ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950"
+            ? "bg-gradient-to-br from-zinc-800 to-zinc-900 text-white dark:from-zinc-100 dark:to-zinc-200 dark:text-zinc-950"
             : "bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100",
-          "border border-zinc-200 dark:border-zinc-800",
+          isUser ? "" : "border border-gray-100 dark:border-zinc-800",
         ].join(" ")}
       >
+        {/* Copy icon for text responses - top right */}
+        {message.type === "text" && !message.typing && !isUser && (
+          <button
+            onClick={copyText}
+            className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full bg-gray-50 text-zinc-400 opacity-0 shadow-sm transition-all duration-200 hover:bg-white hover:text-zinc-700 hover:shadow-md group-hover:opacity-100 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+            title="Copy"
+          >
+            {copiedText ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+              </svg>
+            )}
+          </button>
+        )}
+
         {/* Text content - shown for text and vision types, or when no image */}
         {(!message.imageUrl || message.type === "text" || isVision) && (
           <>

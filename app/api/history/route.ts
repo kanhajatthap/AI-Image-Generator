@@ -21,11 +21,13 @@ export async function GET() {
 
   const db = await getDb();
   await db.collection("image_history").createIndex({ userId: 1, createdAt: -1 });
+  
+  // Only return AI-generated images (type: "image"), exclude vision/OCR uploads
   const rows = await db
     .collection("image_history")
     .find(
-      { userId },
-      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1 } },
+      { userId, type: "image" },
+      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1, imageBase64: 1 } },
     )
     .sort({ createdAt: -1 })
     .toArray();
@@ -46,6 +48,7 @@ export async function GET() {
     pinned: !!row.pinned,
     model: row.model,
     mimeType: row.mimeType || "image/png",
+    imageBase64: row.imageBase64,
     createdAt: row.createdAt,
   }));
 

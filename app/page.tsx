@@ -247,7 +247,7 @@ export default function Home() {
         return;
       }
 
-      // Parse JSON response from Pollinations API
+      // Parse JSON response from API
       const json = await res.json();
       console.log("[PAGE] API response:", json);
 
@@ -282,13 +282,6 @@ export default function Home() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === typingMsg.id ? { ...m, typing: false, type: "text", content: json.text } : m,
-          ),
-        );
-      } else {
-        // Fallback for unexpected response format
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === typingMsg.id ? { ...m, typing: false, content: "Unexpected response format." } : m,
           ),
         );
       }
@@ -508,7 +501,7 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <div className="h-screen bg-gray-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <div className="flex h-full">
         <Sidebar
           items={history}
@@ -523,29 +516,41 @@ export default function Home() {
         />
 
         <div className="flex h-full flex-1 flex-col overflow-hidden">
-          <header className="flex items-center justify-between border-b border-zinc-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
+          <header className="flex items-center justify-between border-b border-gray-200/80 bg-white/80 px-6 py-4 backdrop-blur-md transition-all duration-300 dark:border-zinc-800/80 dark:bg-zinc-950/80">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-semibold">AI Image Generator</span>
-              <span className="hidden text-xs text-zinc-500 dark:text-zinc-400 sm:inline">
-                ChatGPT-style UI
-              </span>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20">
+                <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                  <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
+                  <polyline points="7.5 19.79 7.5 14.6 3 12"/>
+                  <polyline points="21 12 16.5 14.6 16.5 19.79"/>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                  <line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+              </div>
+              <div>
+                <span className="text-base font-semibold text-zinc-800 dark:text-zinc-100">AI Image Generator</span>
+                <span className="hidden text-xs text-zinc-500 dark:text-zinc-400 sm:block">
+                  Create stunning images with AI
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-3 text-sm">
-              <Link href="/explore" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
+            <div className="flex items-center gap-1 text-sm">
+              <Link href="/explore" className="rounded-lg px-4 py-2 text-zinc-600 transition-all duration-200 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white">
                 Explore
               </Link>
-              <Link href="/history" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
+              <Link href="/history" className="rounded-lg px-4 py-2 text-zinc-600 transition-all duration-200 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white">
                 Images
               </Link>
-              <Link href="/settings" className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white">
+              <Link href="/settings" className="rounded-lg px-4 py-2 text-zinc-600 transition-all duration-200 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white">
                 Settings
               </Link>
               {!authUser && (
-                <div className="flex items-center gap-2">
-                  <Link href="/login" className="rounded-lg border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
+                <div className="ml-2 flex items-center gap-2">
+                  <Link href="/login" className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-all duration-200 hover:border-gray-300 hover:bg-gray-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-900">
                     Login
                   </Link>
-                  <Link href="/signup" className="rounded-lg bg-zinc-900 px-3 py-1.5 text-white dark:bg-zinc-100 dark:text-zinc-950">
+                  <Link href="/signup" className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30">
                     Sign up
                   </Link>
                 </div>
@@ -555,10 +560,24 @@ export default function Home() {
 
           <ChatWindow messages={messages} />
 
-          <PromptInput onSend={sendPrompt} onEnhance={enhancePrompt} disabled={!canSend} />
+          <PromptInput 
+            onSend={sendPrompt} 
+            onEnhance={enhancePrompt} 
+            onOCRResult={(text) => {
+              const ocrMsg: ChatMessageModel = {
+                id: uid(),
+                role: "assistant",
+                content: text,
+                type: "text",
+                createdAt: new Date().toISOString(),
+              };
+              setMessages((prev) => [...prev, ocrMsg]);
+            }}
+            disabled={!canSend} 
+          />
 
           {!isLoggedIn && (
-            <div className="border-t border-zinc-200 bg-zinc-50 px-4 py-2 text-center text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+            <div className="border-t border-gray-200/80 bg-white/60 px-6 py-3 text-center text-xs text-zinc-500 backdrop-blur-sm dark:border-zinc-800/80 dark:bg-zinc-950/60 dark:text-zinc-400">
               Login required to generate images (so your history can be saved).
             </div>
           )}

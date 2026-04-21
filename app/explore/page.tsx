@@ -101,26 +101,26 @@ export default function ExplorePage() {
   };
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-7xl px-6 py-10">
+    <main className="mx-auto min-h-screen w-full max-w-7xl px-6 py-12">
       {/* Header */}
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Explore</h1>
+          <h1 className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">Explore Gallery</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             Discover AI-generated images from the community
           </p>
         </div>
         <Link
           href="/"
-          className="rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30"
         >
           Back to Generator
         </Link>
       </div>
 
       {/* Sort Options */}
-      <div className="mb-6 flex items-center gap-2">
-        <span className="text-sm text-zinc-500 dark:text-zinc-400">Sort by:</span>
+      <div className="mb-8 flex items-center gap-3 rounded-xl bg-white/60 p-1 shadow-sm ring-1 ring-gray-100 backdrop-blur-sm dark:bg-zinc-900/60 dark:ring-zinc-800">
+        <span className="px-3 text-sm font-medium text-zinc-500 dark:text-zinc-400">Sort by:</span>
         <div className="flex gap-1">
           {(["latest", "popular", "random"] as SortOption[]).map((option) => (
             <button

@@ -80,21 +80,25 @@ export function Sidebar({
   };
 
   return (
-    <aside className="hidden h-screen w-[300px] shrink-0 border-r border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950 md:flex md:flex-col">
+    <aside className="hidden h-screen w-[280px] shrink-0 border-r border-gray-200/60 bg-white/50 p-4 backdrop-blur-sm dark:border-zinc-800/60 dark:bg-zinc-950/50 md:flex md:flex-col">
       <button
         type="button"
         onClick={onNewChat}
-        className="mb-3 rounded-xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white hover:opacity-95 dark:bg-zinc-100 dark:text-zinc-950"
+        className="mb-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-500/30"
       >
-        + New Chat
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        New Chat
       </button>
 
-      <div className="mb-3 flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-        <span className="uppercase tracking-wider">History</span>
-        <span className="text-[11px]">({items.length})</span>
+      <div className="mb-3 flex items-center justify-between px-1">
+        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">History</span>
+        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">{items.length}</span>
       </div>
 
-      <div className="sidebar-scroll flex-1 overflow-y-auto space-y-1">
+      <div className="sidebar-scroll flex-1 overflow-y-auto space-y-1.5">
         {items.map((item) => {
           const active = item.id === activeId;
           const label = item.title || item.prompt || "Untitled";
@@ -105,28 +109,29 @@ export function Sidebar({
                 type="button"
                 onClick={() => onSelect(item.id)}
                 className={[
-                  "w-full rounded-lg px-3 py-2 pr-10 text-left text-sm",
+                  "w-full rounded-xl px-3 py-2.5 pr-10 text-left text-sm transition-all duration-200",
                   active
-                    ? "bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-                    : "hover:bg-zinc-100 dark:hover:bg-zinc-900",
+                    ? "bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 shadow-sm ring-1 ring-indigo-100 dark:from-indigo-950/50 dark:to-purple-950/50 dark:text-indigo-300 dark:ring-indigo-800/30"
+                    : "hover:bg-gray-50 hover:shadow-sm dark:hover:bg-zinc-900/50",
                 ].join(" ")}
                 title={label}
               >
                 <div className="flex items-center gap-2">
                   {item.pinned ? (
                     <svg
-                      className="h-3.5 w-3.5 shrink-0 text-zinc-500 dark:text-zinc-400"
+                      className="h-3.5 w-3.5 shrink-0 text-amber-500"
                       viewBox="0 0 24 24"
-                      fill="none"
+                      fill="currentColor"
                       stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                      strokeWidth="1"
                     >
-                      <path d="M12 17v5" />
-                      <path d="M8 3h8l1 6-5 5h-2L7 9l1-6Z" />
+                      <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
                     </svg>
-                  ) : null}
+                  ) : (
+                    <svg className="h-3.5 w-3.5 shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                  )}
 
                   {isEditing ? (
                     <input
@@ -141,14 +146,14 @@ export function Sidebar({
                         e.preventDefault();
                         e.stopPropagation();
                       }}
-                      className="h-6 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm font-medium text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:ring-zinc-600"
+                      className="h-6 w-full rounded-md border border-gray-200 bg-white px-2 text-sm font-medium text-zinc-900 outline-none ring-2 ring-indigo-500/20 focus:border-indigo-500 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   ) : (
-                    <div className="line-clamp-1 font-medium">{label}</div>
+                    <div className="line-clamp-1 font-medium text-zinc-700 dark:text-zinc-200">{label}</div>
                   )}
                 </div>
-                <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  {new Date(item.createdAt).toLocaleString()}
+                <div className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                  {new Date(item.createdAt).toLocaleDateString()}
                 </div>
               </button>
 

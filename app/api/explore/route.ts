@@ -7,28 +7,31 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sort = searchParams.get("sort") || "latest";
-  const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10), 100);
+  const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
+  const page = Math.max(parseInt(searchParams.get("page") || "1", 10), 1);
+  const q = searchParams.get("q") || "";
+  const skip = (page - 1) * limit;
 
   try {
     const db = await getDb();
     await db.collection("image_history").createIndex({ createdAt: -1 });
+    await db.collection("image_history").createIndex({ prompt: "text" });
 
-    // Build query - only images with actual image data
-    const query = {
+    const query: any = {
       mimeType: { $ne: "text/plain" },
       imageBase64: { $exists: true },
     };
 
-    // Build sort based on parameter
+    if (q) {
+      query.prompt = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+    }
+
     let sortOption: any = {};
     switch (sort) {
       case "popular":
-        // For now, use createdAt as proxy for popularity
-        // In future, could add viewCount or likeCount field
         sortOption = { createdAt: -1 };
         break;
       case "random":
-        // Random sampling will be done differently
         sortOption = { createdAt: -1 };
         break;
       case "latest":
@@ -51,10 +54,10 @@ export async function GET(req: Request) {
         },
       })
       .sort(sortOption)
+      .skip(skip)
       .limit(limit)
       .toArray();
 
-    // Handle random sorting in memory if requested
     let results = rows;
     if (sort === "random") {
       results = [...rows].sort(() => Math.random() - 0.5);
@@ -71,7 +74,7 @@ export async function GET(req: Request) {
       createdAt: row.createdAt,
     }));
 
-    return NextResponse.json({ items }, { status: 200 });
+    return NextResponse.json({ items, page, hasMore: items.length === limit }, { status: 200 });
   } catch (e) {
     console.error("Explore API error:", e);
     return NextResponse.json(

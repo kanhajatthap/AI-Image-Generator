@@ -12,6 +12,7 @@ export interface PromptInputOptions {
   seed?: number;
   model: string;
   image?: File;
+  batchCount?: number;
 }
 
 interface PromptInputProps {
@@ -44,9 +45,15 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [dragCounter, setDragCounter] = useState(0);
   const [textareaHeight, setTextareaHeight] = useState(24);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchCount, setBatchCount] = useState(4);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -61,6 +68,43 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
     textarea.style.height = `${newHeight}px`;
     setTextareaHeight(newHeight);
   }, [value]);
+
+  // Fetch prompt suggestions
+  useEffect(() => {
+    if (!value.trim() || value.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/prompt-history?q=${encodeURIComponent(value.trim())}&limit=5`);
+        if (res.ok) {
+          const json = await res.json();
+          const filtered = (json.prompts || []).filter((p: string) => p !== value.trim());
+          setSuggestions(filtered);
+          setShowSuggestions(filtered.length > 0);
+          setSelectedSuggestionIndex(-1);
+        }
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [value]);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   // Handle paste from clipboard
   useEffect(() => {
@@ -192,7 +236,6 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
   };
 
   const send = async () => {
-    // If only image is selected (no prompt), process as OCR
     if (selectedImage && !value.trim()) {
       await processOCR(selectedImage);
       return;
@@ -200,13 +243,10 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
 
     const prompt = value.trim();
     if (!prompt && !selectedImage) return;
-    console.log("[PROMPT INPUT] Sending:", { prompt, hasImage: !!selectedImage });
-    if (selectedImage) {
-      console.log("[PROMPT INPUT] Image:", selectedImage.name, selectedImage.size, selectedImage.type);
-    }
     setValue("");
     setTemplateValue("");
     setStyleValue("");
+    setShowSuggestions(false);
     await onSend({
       prompt,
       width: settings.width,
@@ -214,6 +254,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
       seed: settings.seed,
       model: settings.model,
       image: selectedImage || undefined,
+      batchCount: batchMode ? batchCount : undefined,
     });
     setSelectedImage(null);
   };
@@ -231,8 +272,32 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
   };
 
   const onKeyDown = async (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSuggestions && suggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedSuggestionIndex((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+        return;
+      }
+      if (e.key === "Tab" && selectedSuggestionIndex >= 0) {
+        e.preventDefault();
+        setValue(suggestions[selectedSuggestionIndex]);
+        setShowSuggestions(false);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowSuggestions(false);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey && !disabled) {
       e.preventDefault();
+      setShowSuggestions(false);
       await send();
     }
   };
@@ -280,6 +345,30 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
           </button>
         </div>
         <div className="flex items-center gap-2">
+          {/* Batch Mode Toggle */}
+          <div className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-2 py-1.5 dark:border-zinc-700">
+            <label className="flex items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-400">
+              <input
+                type="checkbox"
+                checked={batchMode}
+                onChange={(e) => setBatchMode(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              Batch
+            </label>
+            {batchMode && (
+              <select
+                value={batchCount}
+                onChange={(e) => setBatchCount(parseInt(e.target.value))}
+                className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs dark:border-zinc-600 dark:bg-zinc-800"
+              >
+                {[2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>{n}x</option>
+                ))}
+              </select>
+            )}
+          </div>
+
           {onEnhance && (
             <button
               type="button"
@@ -368,6 +457,36 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled }: Prompt
 
         {/* ChatGPT-style Premium Input Container */}
         <div className="mx-auto w-full max-w-3xl">
+          {/* Autocomplete Suggestions */}
+          {showSuggestions && suggestions.length > 0 && (
+            <div ref={suggestionsRef} className="mb-2 rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+              {suggestions.map((suggestion, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  onClick={() => {
+                    setValue(suggestion);
+                    setShowSuggestions(false);
+                  }}
+                  className={`flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors ${
+                    index === selectedSuggestionIndex
+                      ? "bg-zinc-100 dark:bg-zinc-800"
+                      : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                  }`}
+                >
+                  <svg className="h-4 w-4 shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span className="truncate text-zinc-700 dark:text-zinc-300">{suggestion}</span>
+                </button>
+              ))}
+              <div className="border-t border-zinc-100 px-4 py-1.5 text-[10px] text-zinc-400 dark:border-zinc-800">
+                Tab to select · Esc to close
+              </div>
+            </div>
+          )}
+
           <div className={`relative flex items-end rounded-2xl border border-gray-700/50 bg-zinc-800/50 shadow-lg shadow-black/10 backdrop-blur-sm transition-all duration-200 dark:border-zinc-600/30 dark:bg-zinc-900/80 ${isDragging ? "border-indigo-500 ring-2 ring-indigo-500/20" : ""}`}>
             {/* Image Upload Button (+) */}
             <input

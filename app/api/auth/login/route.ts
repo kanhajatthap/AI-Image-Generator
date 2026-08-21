@@ -49,8 +49,10 @@ export async function POST(req: Request) {
       { status: 200 },
     );
   } catch (error) {
+    console.error("Login error:", error);
+    const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to login.", details: String(error) },
+      { error: "Failed to login.", details: message },
       { status: 500 },
     );
   }

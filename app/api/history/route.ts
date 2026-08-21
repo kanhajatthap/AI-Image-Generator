@@ -22,12 +22,12 @@ export async function GET() {
   const db = await getDb();
   await db.collection("image_history").createIndex({ userId: 1, createdAt: -1 });
   
-  // Only return AI-generated images (type: "image"), exclude vision/OCR uploads
+  // Return all history items (images, text, and vision)
   const rows = await db
     .collection("image_history")
     .find(
-      { userId, type: "image" },
-      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1, imageBase64: 1 } },
+      { userId },
+      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1, imageBase64: 1, type: 1, generatedText: 1 } },
     )
     .sort({ createdAt: -1 })
     .toArray();

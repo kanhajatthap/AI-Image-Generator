@@ -24,7 +24,7 @@ export function ChatWindow({ messages }: ChatWindowProps) {
   }, [sorted.length]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-gray-50/50 dark:bg-zinc-950/50">
+    <div className="flex flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950/50">
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-8">
         <div className="mx-auto w-full max-w-3xl space-y-6">
           {!hasMessages && (

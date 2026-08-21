@@ -76,3 +76,15 @@ body {
 .dark .sidebar-scroll {
   scrollbar-color: rgba(82, 82, 91, 0.6) transparent;
 }
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Mobile responsive optimizations */
+@media (max-width: 640px) {
+  .group:hover .hover-overlay-mobile {
+    opacity: 1;
+  }
+}

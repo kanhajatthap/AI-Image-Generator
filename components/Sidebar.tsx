@@ -80,7 +80,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="hidden h-screen w-[280px] shrink-0 border-r border-gray-200/60 bg-white/50 p-4 backdrop-blur-sm dark:border-zinc-800/60 dark:bg-zinc-950/50 md:flex md:flex-col">
+    <aside className="hidden h-screen w-[280px] shrink-0 border-r border-gray-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950/50 md:flex md:flex-col">
       <button
         type="button"
         onClick={onNewChat}

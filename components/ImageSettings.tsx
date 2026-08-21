@@ -66,13 +66,24 @@ export function ImageSettings({ settings, onChange }: ImageSettingsProps) {
       {/* Model */}
       <div className="flex items-center gap-2">
         <label className="text-zinc-500 dark:text-zinc-400">Model:</label>
-        <input
-          type="text"
+        <select
           value={settings.model}
           onChange={(e) => onChange({ ...settings, model: e.target.value })}
-          placeholder="flux"
-          className="w-24 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-zinc-500"
-        />
+          className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-zinc-500"
+        >
+          <optgroup label="Image Models">
+            <option value="flux">FLUX.1 Schnell</option>
+            <option value="flux-realism">FLUX Realism</option>
+            <option value="flux-anime">FLUX Anime</option>
+            <option value="flux-3d">FLUX 3D</option>
+            <option value="turbo">Turbo</option>
+          </optgroup>
+          <optgroup label="Text Models">
+            <option value="openai">OpenAI GPT</option>
+            <option value="mistral">Mistral</option>
+            <option value="claude">Claude</option>
+          </optgroup>
+        </select>
       </div>
     </div>
   );

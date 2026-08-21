@@ -32,7 +32,7 @@ export default function SignupPage() {
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        setError(json?.error || "Signup failed.");
+        setError(json?.details || json?.error || "Signup failed.");
         return;
       }
 

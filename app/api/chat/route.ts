@@ -85,6 +85,65 @@ export async function POST(req: Request) {
     const shouldGenerateImage = isImageGenerationRequest(prompt);
     const encodedPrompt = encodePrompt(prompt);
 
+    // Check if prompt is asking for similar images - redirect to variations API
+    const isSimilarRequest = /\b(similar|variation|variations|like this|similar to this)\b/i.test(prompt);
+    
+    if (uploadedImageBase64 && isSimilarRequest) {
+      console.log("[API CHAT] Similar/variation request detected, generating variations");
+      try {
+        // First save the uploaded image to history to get an ID
+        const db = await getDb();
+        const history = db.collection("image_history");
+        await history.createIndex({ userId: 1, createdAt: -1 });
+        
+        const cleanPrompt = prompt.replace(/\b(similar|variation|variations|like this|similar to this)\b/gi, "").trim() || "similar image";
+        
+        const saveResult = await history.insertOne({
+          userId: session.userId,
+          prompt: cleanPrompt,
+          type: "image",
+          imageBase64: uploadedImageBase64,
+          mimeType: imageMimeType || "image/png",
+          createdAt: new Date(),
+        });
+        
+        const historyId = saveResult.insertedId.toString();
+        const imageUrl = `/api/history/${historyId}/image`;
+        
+        // Now call variations API
+        const variationsRes = await fetch(new URL("/api/variations", req.url).toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            originalImageUrl: imageUrl,
+            prompt: cleanPrompt,
+            count: 4,
+            userId: session.userId,
+          }),
+        });
+
+        if (!variationsRes.ok) {
+          console.log("[API CHAT] Variations API failed");
+          return NextResponse.json({ success: false, error: "Failed to generate similar images." }, { status: 500 });
+        }
+
+        const variationsJson = await variationsRes.json();
+        console.log("[API CHAT] Variations generated:", variationsJson.variations?.length || 0);
+        
+        return NextResponse.json({
+          success: true,
+          type: "variations",
+          variations: variationsJson.variations || [],
+          historyId,
+          prompt: cleanPrompt,
+          message: "Generated similar images",
+        }, { status: 200 });
+      } catch (variationError) {
+        console.error("[API CHAT] Variations error:", variationError);
+        return NextResponse.json({ success: false, error: "Failed to generate similar images." }, { status: 500 });
+      }
+    }
+
     // VISION: Handle image analysis using OCR.space
     if (uploadedImageBase64) {
       console.log("[API CHAT] Starting OCR analysis");

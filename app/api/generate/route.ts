@@ -3,6 +3,9 @@ import { cookies } from "next/headers";
 import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
+import { checkRateLimit } from "../../../lib/rateLimit";
+import { getCachedImage, setCachedImage } from "../../../lib/cache";
+import { addWatermark } from "../../../lib/watermark";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,7 +53,6 @@ export async function POST(req: Request) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   const historyId = typeof body?.historyId === "string" ? body.historyId.trim() : null;
 
-  // Extract image settings from request
   const settings: ImageSettings = {
     width: typeof body?.width === "number" ? body.width : undefined,
     height: typeof body?.height === "number" ? body.height : undefined,
@@ -73,38 +75,63 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Please login to generate." }, { status: 401 });
     }
 
-    const shouldGenerateImage = isImagePrompt(prompt);
+    const rateLimit = checkRateLimit(session.userId);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Please wait before trying again.", retryAfter: rateLimit.retryAfter },
+        { status: 429 }
+      );
+    }
 
-    // Apply style enhancement if provided
+    const shouldGenerateImage = isImagePrompt(prompt);
     const finalPrompt = settings.style ? enhancePromptWithStyle(prompt, settings.style) : prompt;
     const encodedPrompt = encodePrompt(finalPrompt);
 
     if (shouldGenerateImage) {
-      // Build image URL with query parameters
-      const queryParams = new URLSearchParams();
-      if (settings.width) queryParams.set("width", settings.width.toString());
-      if (settings.height) queryParams.set("height", settings.height.toString());
-      if (settings.seed !== undefined) queryParams.set("seed", settings.seed.toString());
-      if (settings.model) queryParams.set("model", settings.model);
+      const cached = getCachedImage(finalPrompt, settings.width, settings.height, settings.seed, settings.model, settings.style);
 
-      const queryString = queryParams.toString();
-      const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}${queryString ? `?${queryString}` : ""}`;
+      let imageBuffer: Buffer;
+      let contentType: string;
+      let imageUrl: string;
 
-      // Fetch the image
-      const imageRes = await fetch(imageUrl);
+      if (cached) {
+        imageBuffer = Buffer.from(cached.data, "base64") as Buffer;
+        contentType = cached.mimeType;
+        const queryParams = new URLSearchParams();
+        if (settings.width) queryParams.set("width", settings.width.toString());
+        if (settings.height) queryParams.set("height", settings.height.toString());
+        if (settings.seed !== undefined) queryParams.set("seed", settings.seed.toString());
+        if (settings.model) queryParams.set("model", settings.model);
+        imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}${queryParams.toString() ? `?${queryParams}` : ""}`;
+      } else {
+        const queryParams = new URLSearchParams();
+        if (settings.width) queryParams.set("width", settings.width.toString());
+        if (settings.height) queryParams.set("height", settings.height.toString());
+        if (settings.seed !== undefined) queryParams.set("seed", settings.seed.toString());
+        if (settings.model) queryParams.set("model", settings.model);
 
-      if (!imageRes.ok) {
-        return NextResponse.json(
-          { error: "Image generation failed.", details: `Pollinations returned ${imageRes.status}` },
-          { status: imageRes.status }
-        );
+        const queryString = queryParams.toString();
+        imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}${queryString ? `?${queryString}` : ""}`;
+
+        const imageRes = await fetch(imageUrl);
+
+        if (!imageRes.ok) {
+          return NextResponse.json(
+            { error: "Image generation failed.", details: `Pollinations returned ${imageRes.status}` },
+            { status: imageRes.status }
+          );
+        }
+
+        contentType = imageRes.headers.get("content-type") || "image/png";
+        const bytes = await imageRes.arrayBuffer();
+        const rawBuffer = Buffer.from(bytes);
+
+        const watermarkedBuffer = await addWatermark(rawBuffer);
+
+        imageBuffer = watermarkedBuffer;
+        setCachedImage(finalPrompt, watermarkedBuffer.toString("base64"), contentType, settings.width, settings.height, settings.seed, settings.model, settings.style);
       }
 
-      const contentType = imageRes.headers.get("content-type") || "image/png";
-      const bytes = await imageRes.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-
-      // Save to history
       const db = await getDb();
       const history = db.collection("image_history");
       await history.createIndex({ userId: 1, createdAt: -1 });
@@ -112,7 +139,6 @@ export async function POST(req: Request) {
       let resultHistoryId: string | null = null;
 
       if (historyId && ObjectId.isValid(historyId)) {
-        // Continue existing conversation
         await history.updateOne(
           { _id: new ObjectId(historyId), userId: session.userId },
           {
@@ -120,12 +146,12 @@ export async function POST(req: Request) {
               messages: {
                 $each: [
                   { role: "user", content: prompt, createdAt: new Date() },
-                  { role: "assistant", content: "Image generated", imageBase64: buffer.toString("base64"), createdAt: new Date() },
+                  { role: "assistant", content: "Image generated", imageBase64: imageBuffer.toString("base64"), createdAt: new Date() },
                 ],
               },
             } as unknown as any,
             $set: {
-              imageBase64: buffer.toString("base64"),
+              imageBase64: imageBuffer.toString("base64"),
               mimeType: contentType,
               seed: settings.seed,
               updatedAt: new Date()
@@ -134,17 +160,19 @@ export async function POST(req: Request) {
         );
         resultHistoryId = historyId;
       } else {
-        // Create new conversation
         const result = await history.insertOne({
           userId: session.userId,
           prompt,
           model: "pollinations-image",
           mimeType: contentType,
-          imageBase64: buffer.toString("base64"),
+          imageBase64: imageBuffer.toString("base64"),
           seed: settings.seed,
+          width: settings.width,
+          height: settings.height,
+          style: settings.style,
           messages: [
             { role: "user", content: prompt, createdAt: new Date() },
-            { role: "assistant", content: "Image generated", imageBase64: buffer.toString("base64"), createdAt: new Date() },
+            { role: "assistant", content: "Image generated", imageBase64: imageBuffer.toString("base64"), createdAt: new Date() },
           ],
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -152,7 +180,6 @@ export async function POST(req: Request) {
         resultHistoryId = result.insertedId.toString();
       }
 
-      // Return JSON response with image type and settings
       return NextResponse.json({
         type: "image",
         url: imageUrl,
@@ -167,7 +194,6 @@ export async function POST(req: Request) {
       }, { status: 200 });
 
     } else {
-      // Generate text using Pollinations AI
       const textUrl = `https://text.pollinations.ai/${encodedPrompt}`;
 
       const textRes = await fetch(textUrl);
@@ -181,7 +207,6 @@ export async function POST(req: Request) {
 
       const generatedText = await textRes.text();
 
-      // Save to history
       const db = await getDb();
       const history = db.collection("image_history");
       await history.createIndex({ userId: 1, createdAt: -1 });
@@ -189,7 +214,6 @@ export async function POST(req: Request) {
       let resultHistoryId: string | null = null;
 
       if (historyId && ObjectId.isValid(historyId)) {
-        // Continue existing conversation
         await history.updateOne(
           { _id: new ObjectId(historyId), userId: session.userId },
           {
@@ -206,7 +230,6 @@ export async function POST(req: Request) {
         );
         resultHistoryId = historyId;
       } else {
-        // Create new conversation
         const result = await history.insertOne({
           userId: session.userId,
           prompt,
@@ -223,7 +246,6 @@ export async function POST(req: Request) {
         resultHistoryId = result.insertedId.toString();
       }
 
-      // Return JSON response with text type
       return NextResponse.json({
         type: "text",
         text: generatedText,

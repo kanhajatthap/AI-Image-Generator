@@ -25,7 +25,7 @@ export default function LoginPage() {
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        setError(json?.error || "Login failed.");
+        setError(json?.details || json?.error || "Login failed.");
         return;
       }
 

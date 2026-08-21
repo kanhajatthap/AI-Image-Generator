@@ -145,16 +145,12 @@ export default function Home() {
   };
 
   const sendPrompt = async (options: PromptInputOptions) => {
-    // Prevent multiple concurrent requests
     if (busy) {
-      console.log("Request already in progress, ignoring duplicate.");
       return;
     }
 
     // Check rate limit cooldown
     if (rateLimitUntil !== null && Date.now() < rateLimitUntil) {
-      const secondsLeft = Math.ceil((rateLimitUntil - Date.now()) / 1000);
-      console.log(`Rate limit cooldown active. Please wait ${secondsLeft} seconds.`);
       return;
     }
 
@@ -171,10 +167,75 @@ export default function Home() {
       return;
     }
 
-    const { prompt, image } = options;
-    console.log("[PAGE] sendPrompt called with:", { prompt, hasImage: !!image });
+    const { prompt, image, batchCount } = options;
     if (image) {
       console.log("[PAGE] Image details:", image.name, image.size, image.type);
+    }
+
+    if (batchCount && batchCount > 1) {
+      const now = new Date().toISOString();
+      const userMsg: ChatMessageModel = {
+        id: uid(),
+        role: "user",
+        content: prompt,
+        createdAt: now,
+      };
+      const typingMsg: ChatMessageModel = {
+        id: uid(),
+        role: "assistant",
+        content: `Generating ${batchCount} images...`,
+        createdAt: now,
+        typing: true,
+      };
+      setMessages((prev) => [...prev, userMsg, typingMsg]);
+      setBusy(true);
+
+      try {
+        const res = await fetch("/api/batch-generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            count: batchCount,
+            width: options.width,
+            height: options.height,
+            model: options.model,
+          }),
+        });
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          const msg = json?.error || "Failed to generate batch.";
+          setMessages((prev) =>
+            prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+          );
+          return;
+        }
+
+        const json = await res.json();
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              type: "text",
+              content: `Generated ${batchCount} images:`,
+              prompt: prompt,
+              variations: json.images?.map((img: any, i: number) => ({
+                id: img.id,
+                url: img.url,
+                seed: img.seed,
+                prompt: prompt,
+              })) || [],
+              historyId: json.historyId,
+            } : m,
+          ),
+        );
+        await loadHistoryList();
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
 
     const now = new Date().toISOString();
@@ -199,17 +260,14 @@ export default function Home() {
       let res: Response;
 
       if (image) {
-        console.log("[PAGE] Sending FormData request to /api/chat");
         const formData = new FormData();
         formData.append("prompt", prompt);
         formData.append("image", image);
-        console.log("[PAGE] FormData prepared");
         res = await fetch("/api/chat", {
           method: "POST",
           body: formData,
         });
       } else {
-        console.log("[PAGE] Sending JSON request to /api/chat");
         res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -217,15 +275,11 @@ export default function Home() {
         });
       }
 
-      console.log("[PAGE] Response status:", res.status, res.statusText);
-
       if (!res.ok) {
         const json = await res.json().catch(() => null);
         const msg = json?.error || "Failed to generate.";
         const details = json?.details || "";
-        console.error("API Error:", { status: res.status, error: msg, details, fullResponse: json });
 
-        // Handle 429 rate limit with user-friendly message and 15-second cooldown
         if (res.status === 429) {
           const cooldownMs = 15000; // 15 seconds
           setRateLimitUntil(Date.now() + cooldownMs);
@@ -249,7 +303,6 @@ export default function Home() {
 
       // Parse JSON response from API
       const json = await res.json();
-      console.log("[PAGE] API response:", json);
 
       if (json.type === "image") {
         // Display generated image from URL
@@ -282,6 +335,21 @@ export default function Home() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === typingMsg.id ? { ...m, typing: false, type: "text", content: json.text } : m,
+          ),
+        );
+      } else if (json.type === "variations") {
+        // Display variations grid - don't set imageUrl to avoid loading issues
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === typingMsg.id ? {
+              ...m,
+              typing: false,
+              type: "text",
+              content: "Generated similar images:",
+              prompt: json.prompt,
+              variations: json.variations,
+              historyId: json.historyId,
+            } : m,
           ),
         );
       }
@@ -501,7 +569,7 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen bg-gray-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <div className="h-screen bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <div className="flex h-full">
         <Sidebar
           items={history}

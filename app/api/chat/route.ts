@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
+import { buildImageUrl, PollinationsError, fetchPollinationsImage, fetchPollinationsText } from "../../../lib/pollinations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -239,23 +240,12 @@ export async function POST(req: Request) {
 
     // IMAGE GENERATION
     if (shouldGenerateImage) {
-      const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${Date.now()}`;
+      const imageUrl = buildImageUrl(encodeURIComponent(prompt), { width: 1024, height: 1024, seed: Date.now() });
 
       try {
-        const imageRes = await fetch(imageUrl);
-
-        if (!imageRes.ok) {
-          return NextResponse.json(
-            { error: "Image generation failed.", details: `Pollinations returned ${imageRes.status}` },
-            { status: imageRes.status }
-          );
-        }
-
-        const contentType = imageRes.headers.get("content-type") || "image/png";
-        const bytes = await imageRes.arrayBuffer();
-        const buffer = Buffer.from(bytes);
+        const { buffer, mimeType } = await fetchPollinationsImage(imageUrl);
         const base64Data = buffer.toString("base64");
-        const dataUrl = `data:${contentType};base64,${base64Data}`;
+        const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
         // Save to history
         const db = await getDb();
@@ -266,7 +256,7 @@ export async function POST(req: Request) {
           prompt,
           type: "image",
           imageBase64: base64Data,
-          mimeType: contentType,
+          mimeType,
           createdAt: new Date(),
         });
 
@@ -276,9 +266,15 @@ export async function POST(req: Request) {
         }, { status: 200 });
       } catch (error) {
         console.error("Image fetch error:", error);
+        if (error instanceof PollinationsError) {
+          return NextResponse.json(
+            { error: error.message, details: error.details || "" },
+            { status: error.status },
+          );
+        }
         return NextResponse.json(
-          { error: "Failed to fetch image from Pollinations." },
-          { status: 500 }
+          { error: "Failed to fetch image. Please try again in a moment.", details: error instanceof Error ? error.message : String(error) },
+          { status: 502 },
         );
       }
 
@@ -286,16 +282,22 @@ export async function POST(req: Request) {
       // TEXT GENERATION
       const textUrl = `https://text.pollinations.ai/${encodedPrompt}`;
 
-      const textRes = await fetch(textUrl);
-
-      if (!textRes.ok) {
+      let responseText: string;
+      try {
+        responseText = await fetchPollinationsText(textUrl);
+      } catch (error) {
+        console.error("Text fetch error:", error);
+        if (error instanceof PollinationsError) {
+          return NextResponse.json(
+            { error: error.message, details: error.details || "" },
+            { status: error.status },
+          );
+        }
         return NextResponse.json(
-          { error: "Text generation failed.", details: `Pollinations returned ${textRes.status}` },
-          { status: textRes.status }
+          { error: "Failed to fetch text response. Please try again.", details: error instanceof Error ? error.message : String(error) },
+          { status: 502 },
         );
       }
-
-      const responseText = await textRes.text();
 
       // Parse response - handle both plain text and JSON formats
       let cleanMessage = responseText;

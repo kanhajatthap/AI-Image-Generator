@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
+import { buildImageUrl, PollinationsError, fetchPollinationsImage } from "../../../lib/pollinations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,17 +44,9 @@ export async function POST(req: Request) {
     const encodedPrompt = encodeURIComponent(stylePrompt);
 
     const generateOne = async (seed: number) => {
-      const params = new URLSearchParams({
-        width: String(width),
-        height: String(height),
-        seed: String(seed),
-        model,
-      });
-      const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?${params}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Failed for seed ${seed}`);
-      const bytes = await res.arrayBuffer();
-      return { buffer: Buffer.from(bytes), mimeType: res.headers.get("content-type") || "image/png", seed, url };
+      const url = buildImageUrl(encodedPrompt, { width, height, seed, model });
+      const { buffer, mimeType } = await fetchPollinationsImage(url);
+      return { buffer, mimeType, seed, url };
     };
 
     const seeds = Array.from({ length: count }, () => Math.floor(Math.random() * 10000000));
@@ -98,6 +91,15 @@ export async function POST(req: Request) {
     }, { status: 200 });
   } catch (e) {
     console.error("Batch generation error:", e);
-    return NextResponse.json({ error: "Server error.", details: String(e) }, { status: 500 });
+    if (e instanceof PollinationsError) {
+      return NextResponse.json(
+        { error: e.message, details: e.details || "" },
+        { status: e.status },
+      );
+    }
+    return NextResponse.json(
+      { error: "Batch generation failed. Please try again in a moment.", details: String(e) },
+      { status: 502 },
+    );
   }
 }

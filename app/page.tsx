@@ -13,6 +13,14 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+async function getErrorMessage(res: Response, fallback: string): Promise<string> {
+  const json = await res.json().catch(() => null);
+  const msg = (json && typeof json.error === "string" && json.error) || fallback;
+  const details = (json && typeof json.details === "string" && json.details) || "";
+  const base = res.status >= 500 ? `${msg} (HTTP ${res.status})` : msg;
+  return details ? `${base} — ${details}` : base;
+}
+
 export default function Home() {
   const [history, setHistory] = useState<HistoryListItem[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
@@ -191,23 +199,34 @@ export default function Home() {
       setBusy(true);
 
       try {
-        const res = await fetch("/api/batch-generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            count: batchCount,
-            width: options.width,
-            height: options.height,
-            model: options.model,
-          }),
-        });
+        let res: Response;
+        try {
+          res = await fetch("/api/batch-generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt,
+              count: batchCount,
+              width: options.width,
+              height: options.height,
+              model: options.model,
+            }),
+          });
+        } catch {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === typingMsg.id
+                ? { ...m, typing: false, content: "Could not reach the server. Check your internet connection and try again." }
+                : m,
+            ),
+          );
+          return;
+        }
 
         if (!res.ok) {
-          const json = await res.json().catch(() => null);
-          const msg = json?.error || "Failed to generate batch.";
+          const errText = await getErrorMessage(res, "Failed to generate batch. Please try again.");
           setMessages((prev) =>
-            prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+            prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
           );
           return;
         }
@@ -256,50 +275,57 @@ export default function Home() {
     setMessages((prev) => [...prev, userMsg, typingMsg]);
     setBusy(true);
 
-    try {
-      let res: Response;
-
-      if (image) {
-        const formData = new FormData();
-        formData.append("prompt", prompt);
-        formData.append("image", image);
-        res = await fetch("/api/chat", {
-          method: "POST",
-          body: formData,
-        });
-      } else {
-        res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        });
-      }
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg = json?.error || "Failed to generate.";
-        const details = json?.details || "";
-
-        if (res.status === 429) {
-          const cooldownMs = 15000; // 15 seconds
-          setRateLimitUntil(Date.now() + cooldownMs);
+try {
+        let res: Response;
+        try {
+          if (image) {
+            const formData = new FormData();
+            formData.append("prompt", prompt);
+            formData.append("image", image);
+            res = await fetch("/api/chat", {
+              method: "POST",
+              body: formData,
+            });
+          } else {
+            res = await fetch("/api/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ prompt }),
+            });
+          }
+        } catch {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === typingMsg.id
-                ? { ...m, typing: false, content: "Rate limit reached. Please wait 15 seconds before trying again." }
-                : m
+                ? { ...m, typing: false, content: "Could not reach the server. Check your internet connection and try again." }
+                : m,
             ),
           );
-          // Clear cooldown after 15 seconds
-          setTimeout(() => setRateLimitUntil(null), cooldownMs);
           return;
         }
 
-        setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: `${msg}${details ? ` (${details})` : ""}` } : m)),
-        );
-        return;
-      }
+        if (!res.ok) {
+          if (res.status === 429) {
+            const cooldownMs = 15000; // 15 seconds
+            setRateLimitUntil(Date.now() + cooldownMs);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === typingMsg.id
+                  ? { ...m, typing: false, content: "Rate limit reached. Please wait 15 seconds before trying again." }
+                  : m,
+              ),
+            );
+            // Clear cooldown after 15 seconds
+            setTimeout(() => setRateLimitUntil(null), cooldownMs);
+            return;
+          }
+
+          const errText = await getErrorMessage(res, "Failed to generate. Please try again.");
+          setMessages((prev) =>
+            prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
+          );
+          return;
+        }
 
       // Parse JSON response from API
       const json = await res.json();
@@ -397,10 +423,9 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg = json?.error || "Failed to regenerate.";
+        const errText = await getErrorMessage(res, "Failed to regenerate. Please try again.");
         setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
         );
         return;
       }
@@ -465,10 +490,9 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg = json?.error || "Failed to generate similar image.";
+        const errText = await getErrorMessage(res, "Failed to generate similar image. Please try again.");
         setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
         );
         return;
       }
@@ -533,10 +557,9 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg = json?.error || "Failed to create variation.";
+        const errText = await getErrorMessage(res, "Failed to create variation. Please try again.");
         setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: msg } : m)),
+          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
         );
         return;
       }

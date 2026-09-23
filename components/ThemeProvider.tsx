@@ -19,22 +19,28 @@ export function useTheme() {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // Always start from "light" so server & client HTML match during hydration.
+  // The real persisted/preferred theme is applied once on mount.
   const [theme, setTheme] = useState<Theme>("light");
 
-  // On mount: read saved preference or system preference
   useEffect(() => {
     const saved = localStorage.getItem("theme") as Theme | null;
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const resolved: Theme = saved ?? (prefersDark ? "dark" : "light");
-    setTheme(resolved);
-    document.documentElement.classList.toggle("dark", resolved === "dark");
+    const frame = requestAnimationFrame(() => {
+      setTheme(saved ?? (prefersDark ? "dark" : "light"));
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
+
+  // Keep <html>.dark in sync with the resolved theme
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
 
   const toggle = useCallback(() => {
     setTheme((prev) => {
       const next: Theme = prev === "dark" ? "light" : "dark";
       localStorage.setItem("theme", next);
-      document.documentElement.classList.toggle("dark", next === "dark");
       return next;
     });
   }, []);

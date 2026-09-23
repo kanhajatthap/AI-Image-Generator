@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
 
 export const runtime = "nodejs";
@@ -12,7 +11,6 @@ export async function POST(req: Request) {
     return null;
   });
 
-  const originalImageUrl = typeof body?.originalImageUrl === "string" ? body.originalImageUrl : "";
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   const width = typeof body?.width === "number" ? body.width : 1024;
   const height = typeof body?.height === "number" ? body.height : 1024;
@@ -71,9 +69,6 @@ export async function POST(req: Request) {
     }
 
     // Optionally save the original to history if not already saved
-    const db = await getDb();
-    const history = db.collection("image_history");
-
     return NextResponse.json({
       success: true,
       variations,

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
@@ -139,7 +139,7 @@ export async function POST(req: Request) {
                   { role: "assistant", content: "Image generated", imageBase64: imageBuffer.toString("base64"), createdAt: new Date() },
                 ],
               },
-            } as unknown as any,
+            } as unknown as import("mongodb").Document,
             $set: {
               imageBase64: imageBuffer.toString("base64"),
               mimeType: contentType,
@@ -160,6 +160,7 @@ export async function POST(req: Request) {
           width: settings.width,
           height: settings.height,
           style: settings.style,
+          public: true,
           messages: [
             { role: "user", content: prompt, createdAt: new Date() },
             { role: "assistant", content: "Image generated", imageBase64: imageBuffer.toString("base64"), createdAt: new Date() },
@@ -204,7 +205,7 @@ export async function POST(req: Request) {
                   { role: "assistant", content: generatedText, createdAt: new Date() },
                 ],
               },
-            } as unknown as any,
+            } as unknown as import("mongodb").Document,
             $set: { updatedAt: new Date() },
           }
         );

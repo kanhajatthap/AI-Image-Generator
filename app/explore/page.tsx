@@ -1,9 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import Image from "next/image";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { motion } from "motion/react";
 import { MasonrySkeleton } from "../../components/Skeleton";
+import { Lightbox, type LightboxItem } from "../../components/Lightbox";
+import { PageHeader } from "../../components/PageHeader";
+import { BlurImage } from "../../components/BlurImage";
+import { toast } from "sonner";
+import { Search, X, Copy, Check, Download, Eye, Sparkles, TrendingUp } from "lucide-react";
 
 type ExploreItem = {
   id: string;
@@ -29,7 +34,21 @@ const getColumnCount = () => {
 
 const PAGE_SIZE = 20;
 
+const TRENDING_CHIPS = [
+  "cyberpunk city",
+  "fantasy landscape",
+  "portrait photography",
+  "anime style",
+  "product shot",
+  "logo design",
+  "sci-fi",
+  "neon",
+  "watercolor",
+  "minimalist",
+];
+
 export default function ExplorePage() {
+  const router = useRouter();
   const [items, setItems] = useState<ExploreItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -40,6 +59,7 @@ export default function ExplorePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [hasMore, setHasMore] = useState(true);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const pageRef = useRef(1);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -53,39 +73,42 @@ export default function ExplorePage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const loadGallery = async (page: number, append = false) => {
-    if (append) setLoadingMore(true);
-    else setLoading(true);
-    setError("");
-    try {
-      const params = new URLSearchParams({ sort, limit: String(PAGE_SIZE), page: String(page) });
-      if (debouncedQuery) params.set("q", debouncedQuery);
-      const res = await fetch(`/api/explore?${params}`, { cache: "no-store" });
-      if (!res.ok) {
-        setError("Failed to load gallery.");
-        return;
+  const loadGallery = useCallback(
+    async (page: number, append = false) => {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams({ sort, limit: String(PAGE_SIZE), page: String(page) });
+        if (debouncedQuery) params.set("q", debouncedQuery);
+        const res = await fetch(`/api/explore?${params}`, { cache: "no-store" });
+        if (!res.ok) {
+          setError("Failed to load gallery.");
+          return;
+        }
+        const json = await res.json();
+        const list: ExploreItem[] = Array.isArray(json?.items) ? json.items : [];
+        if (append) {
+          setItems((prev) => [...prev, ...list]);
+        } else {
+          setItems(list);
+        }
+        setHasMore(list.length >= PAGE_SIZE);
+        pageRef.current = page + 1;
+      } catch {
+        setError("Network error while loading gallery.");
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
       }
-      const json = await res.json();
-      const list: ExploreItem[] = Array.isArray(json?.items) ? json.items : [];
-      if (append) {
-        setItems((prev) => [...prev, ...list]);
-      } else {
-        setItems(list);
-      }
-      setHasMore(list.length >= PAGE_SIZE);
-      pageRef.current = page + 1;
-    } catch {
-      setError("Network error while loading gallery.");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  };
+    },
+    [sort, debouncedQuery],
+  );
 
   useEffect(() => {
     pageRef.current = 1;
     loadGallery(1, false);
-  }, [sort, debouncedQuery]);
+  }, [sort, debouncedQuery, loadGallery]);
 
   useEffect(() => {
     if (observerRef.current) observerRef.current.disconnect();
@@ -106,7 +129,7 @@ export default function ExplorePage() {
     return () => {
       if (observerRef.current) observerRef.current.disconnect();
     };
-  }, [hasMore, loading, loadingMore, items.length]);
+  }, [hasMore, loading, loadingMore, items.length, loadGallery]);
 
   useEffect(() => {
     const updateColumns = () => setColumnCount(getColumnCount());
@@ -119,9 +142,20 @@ export default function ExplorePage() {
     try {
       await navigator.clipboard.writeText(item.prompt);
       setCopiedId(item.id);
+      toast.success("Prompt copied");
       setTimeout(() => setCopiedId(null), 2000);
     } catch {}
   };
+
+  const lightboxItems = useMemo<LightboxItem[]>(
+    () =>
+      items.map((item) => ({
+        url: `/api/history/${item.id}/image`,
+        prompt: item.prompt,
+        seed: item.seed,
+      })),
+    [items],
+  );
 
   const distributeIntoColumns = useCallback((items: ExploreItem[], count: number) => {
     const columns: ExploreItem[][] = Array.from({ length: count }, () => []);
@@ -147,28 +181,22 @@ export default function ExplorePage() {
   };
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 sm:mb-8">
-        <div>
-          <h1 className="text-xl font-bold text-zinc-800 dark:text-zinc-100 sm:text-2xl">Explore Gallery</h1>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 sm:text-sm">
-            Discover AI-generated images from the community
-          </p>
-        </div>
-        <Link
-          href="/"
-          className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30 sm:px-5 sm:py-2.5"
-        >
-          Back to Generator
-        </Link>
-      </div>
+    <main className="min-h-screen w-full">
+      <PageHeader
+        title="Explore Gallery"
+        subtitle="Discover AI-generated images from the community"
+        onBack={() => router.push("/")}
+      />
 
+      <motion.main
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+      >
+      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6">
       <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative flex-1 sm:max-w-sm">
-          <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="text"
             value={searchQuery}
@@ -181,10 +209,7 @@ export default function ExplorePage() {
               onClick={() => setSearchQuery("")}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
             >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
+              <X className="h-4 w-4" />
             </button>
           )}
         </div>
@@ -197,7 +222,7 @@ export default function ExplorePage() {
                 key={option}
                 onClick={() => setSort(option)}
                 className={[
-                  "rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-colors sm:px-3 sm:text-sm",
+                  "rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-colors",
                   sort === option
                     ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950"
                     : "border border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900",
@@ -207,6 +232,31 @@ export default function ExplorePage() {
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Trending prompt chips */}
+      <div className="mb-6 flex flex-col gap-2 sm:mb-8">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          <TrendingUp className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400" />
+          Trending prompts
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {TRENDING_CHIPS.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => setSearchQuery(chip)}
+              className={[
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200 active:scale-95",
+                debouncedQuery === chip
+                  ? "border-transparent bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/20"
+                  : "border-zinc-200 bg-white/70 text-zinc-600 backdrop-blur-sm hover:-translate-y-0.5 hover:border-indigo-300 hover:text-indigo-600 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-indigo-600 dark:hover:text-indigo-300",
+              ].join(" ")}
+            >
+              {chip}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -225,7 +275,10 @@ export default function ExplorePage() {
       )}
 
       {!loading && !error && items.length === 0 && (
-        <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center dark:border-zinc-700 sm:p-12">
+        <div className="flex flex-col items-center rounded-xl border border-dashed border-zinc-300 p-8 text-center dark:border-zinc-700 sm:p-12">
+          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-indigo-950/40 dark:to-purple-950/40">
+            <Sparkles className="h-7 w-7 text-indigo-500" />
+          </div>
           <p className="text-zinc-600 dark:text-zinc-400">
             {debouncedQuery ? "No images match your search." : "No images in the gallery yet."}
           </p>
@@ -241,51 +294,58 @@ export default function ExplorePage() {
             <div key={colIndex} className="flex flex-1 flex-col gap-3 sm:gap-4">
               {column.map((item) => {
                 const imageSrc = `/api/history/${item.id}/image`;
+                const globalIndex = items.findIndex((x) => x.id === item.id);
                 return (
-                  <div
+                  <motion.div
                     key={item.id}
-                    className="group relative overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+                    initial={{ opacity: 0, y: 18 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true, margin: "-40px" }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                    className="group relative cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-indigo-500/10 dark:border-zinc-800 dark:bg-zinc-900"
+                    onClick={() => setLightboxIndex(globalIndex)}
                   >
                     <div className="relative overflow-hidden">
-                      <Image
+                      <BlurImage
                         src={imageSrc}
                         alt={item.prompt}
                         width={item.width || 1024}
                         height={item.height || 1024}
-                        loading="lazy"
-                        unoptimized
-                        className="h-auto w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        className="h-auto w-full object-cover transition-transform duration-700 group-hover:scale-105"
                       />
                       <div className="absolute inset-0 flex flex-col justify-between bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                        <div className="flex justify-start p-2">
+                        <div className="flex justify-between p-2">
                           <span className="rounded-full bg-black/50 px-2 py-1 text-[10px] text-white/90 backdrop-blur-sm">
                             {formatDate(item.createdAt)}
                           </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 p-3">
                           <button
-                            onClick={() => copyPrompt(item)}
-                            className="flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyPrompt(item);
+                            }}
+                            className="rounded-full bg-white/90 p-2 text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white"
                             title="Copy prompt"
                           >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                            {copiedId === item.id ? "Copied!" : "Copy Prompt"}
+                            {copiedId === item.id ? (
+                              <Check className="h-3.5 w-3.5 text-green-600" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
                           </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 p-3">
+                          <span className="flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-900 backdrop-blur-sm">
+                            <Eye className="h-3.5 w-3.5" />
+                            View
+                          </span>
                           <a
                             href={imageSrc}
                             download={`explore-${item.id}.png`}
-                            className="flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white"
                             title="Download image"
                           >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                            Download
+                            <Download className="h-4 w-4" />
                           </a>
                         </div>
                       </div>
@@ -300,7 +360,7 @@ export default function ExplorePage() {
                         </p>
                       )}
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
@@ -316,6 +376,14 @@ export default function ExplorePage() {
           <span className="ml-2 text-sm text-zinc-500">Loading more...</span>
         </div>
       )}
+
+      <Lightbox
+        items={lightboxItems}
+        index={lightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
+      </div>
+      </motion.main>
     </main>
   );
 }

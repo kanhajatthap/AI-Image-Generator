@@ -1,8 +1,11 @@
 "use client";
 
-import Image from "next/image";
 import { useMemo, useState } from "react";
 import type { ImageSettings } from "./ChatMessage";
+import { BlurImage } from "./BlurImage";
+import { toast } from "sonner";
+import { Trash2, Download, Link2, RefreshCcw, Copy, Plus, Wand2, Check } from "lucide-react";
+import { Lightbox } from "./Lightbox";
 
 type Props = {
   prompt: string;
@@ -18,6 +21,7 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
   const [busy, setBusy] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [showLightbox, setShowLightbox] = useState(false);
 
   const filename = useMemo(() => {
     const safe = prompt
@@ -33,9 +37,10 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
     try {
       await navigator.clipboard.writeText(prompt);
       setCopiedPrompt(true);
+      toast.success("Prompt copied");
       setTimeout(() => setCopiedPrompt(false), 2000);
     } catch {
-      // ignore
+      toast.error("Could not copy prompt");
     }
   };
 
@@ -43,22 +48,29 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
     try {
       await navigator.clipboard.writeText(imageUrl);
       setCopiedUrl(true);
+      toast.success("Image URL copied");
       setTimeout(() => setCopiedUrl(false), 2000);
     } catch {
-      // ignore
+      toast.error("Could not copy URL");
     }
   };
 
   const handleDelete = async () => {
     if (!onDelete) return;
-    const ok = window.confirm("Delete this image from history?");
-    if (!ok) return;
     setBusy(true);
     try {
       await onDelete();
+      toast.success("Image deleted");
     } finally {
       setBusy(false);
     }
+  };
+
+  const confirmDelete = () => {
+    toast("Delete this image from history?", {
+      description: "This action cannot be undone.",
+      action: { label: "Delete", onClick: handleDelete },
+    });
   };
 
   const handleRegenerate = async () => {
@@ -103,32 +115,28 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
       <div className="p-3">
         {/* Image Container with Hover Overlay */}
         <div className="group relative overflow-hidden rounded-lg">
-          <Image
-            src={imageUrl}
-            alt={prompt}
-            width={settings?.width || 1024}
-            height={settings?.height || 1024}
-            unoptimized
-            className="h-auto w-full border border-zinc-200 transition-transform duration-300 group-hover:scale-105 dark:border-zinc-800"
-          />
+          <div className="cursor-zoom-in" onClick={() => setShowLightbox(true)}>
+            <BlurImage
+              src={imageUrl}
+              alt={prompt}
+              width={settings?.width || 1024}
+              height={settings?.height || 1024}
+              className="h-auto w-full border border-zinc-200 transition-transform duration-300 group-hover:scale-105 dark:border-zinc-800"
+            />
+          </div>
 
-          {/* Hover Overlay - ChatGPT Style */}
+          {/* Hover Overlay */}
           <div className="absolute inset-0 flex flex-col justify-between bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100">
             {/* Top Actions */}
             <div className="flex justify-end p-2">
               <button
                 type="button"
-                onClick={handleDelete}
+                onClick={confirmDelete}
                 disabled={busy || !onDelete}
                 className="rounded-full bg-black/50 p-2 text-white/90 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white disabled:opacity-40"
                 title="Delete"
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                  <line x1="10" y1="11" x2="10" y2="17" />
-                  <line x1="14" y1="11" x2="14" y2="17" />
-                </svg>
+                <Trash2 className="h-4 w-4" />
               </button>
             </div>
 
@@ -139,14 +147,11 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
                 <a
                   href={imageUrl}
                   download={filename}
+                  onClick={(e) => e.stopPropagation()}
                   className="flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white"
                   title="Download Image"
                 >
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
+                  <Download className="h-3.5 w-3.5" />
                   Download
                 </a>
 
@@ -156,10 +161,11 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
                   className="flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white"
                   title="Copy Image URL"
                 >
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
+                  {copiedUrl ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  ) : (
+                    <Link2 className="h-3.5 w-3.5" />
+                  )}
                   {copiedUrl ? "Copied!" : "Copy URL"}
                 </button>
               </div>
@@ -173,10 +179,7 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
                   className="flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-900 backdrop-blur-sm transition-colors hover:bg-white disabled:opacity-60"
                   title="Regenerate Image"
                 >
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="23 4 23 10 17 10" />
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                  </svg>
+                  <RefreshCcw className="h-3.5 w-3.5" />
                   {busy ? "..." : "Regenerate"}
                 </button>
               )}
@@ -206,10 +209,11 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
               onClick={copyPrompt}
               className="flex items-center gap-1 rounded-md border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-              </svg>
+              {copiedPrompt ? (
+                <Check className="h-3 w-3 text-emerald-600" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
               {copiedPrompt ? "Copied!" : "Copy Prompt"}
             </button>
 
@@ -222,10 +226,7 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
                 className="flex items-center gap-1 rounded-md bg-purple-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-purple-700 disabled:opacity-60 dark:bg-purple-600 dark:hover:bg-purple-500"
                 title="Create variation with modified seed"
               >
-                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <line x1="8" y1="12" x2="16" y2="12" />
-                </svg>
+                <Plus className="h-3 w-3" />
                 {busy ? "Creating..." : "Create Variation"}
               </button>
             )}
@@ -238,17 +239,19 @@ export function ImageCard({ prompt, imageUrl, settings, onDelete, onRegenerate, 
                 disabled={busy}
                 className="flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60 dark:bg-blue-600 dark:hover:bg-blue-500"
               >
-                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <line x1="12" y1="8" x2="12" y2="16" />
-                  <line x1="8" y1="12" x2="16" y2="12" />
-                </svg>
+                <Wand2 className="h-3 w-3" />
                 {busy ? "Generating..." : "Generate Similar"}
               </button>
             )}
           </div>
         </div>
       </div>
+
+      <Lightbox
+        items={[{ url: imageUrl, prompt, seed: settings?.seed }]}
+        index={showLightbox ? 0 : null}
+        onClose={() => setShowLightbox(false)}
+      />
     </div>
   );
 }

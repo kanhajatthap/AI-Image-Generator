@@ -1,21 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
 import { buildImageUrl, PollinationsError, fetchPollinationsImage } from "../../../lib/pollinations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-interface BatchRequest {
-  prompt: string;
-  count: number;
-  width?: number;
-  height?: number;
-  model?: string;
-  style?: string;
-}
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -66,6 +56,7 @@ export async function POST(req: Request) {
       width,
       height,
       style,
+      public: true,
       type: "batch",
       batchResults: results.map((r) => ({
         seed: r.seed,

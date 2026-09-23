@@ -1,11 +1,14 @@
- "use client";
+﻿ "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar, type HistoryListItem } from "../components/Sidebar";
 import { ChatWindow } from "../components/ChatWindow";
-import type { ChatMessageModel, ImageSettings } from "../components/ChatMessage";
-import { PromptInput, PromptInputOptions } from "../components/PromptInput";
+import type { ChatMessageModel, Variation } from "../components/ChatMessage";
+import { PromptInput, type PromptInputHandle, PromptInputOptions } from "../components/PromptInput";
+import { useTheme } from "../components/ThemeProvider";
+import { toast } from "sonner";
+import { Menu, X, Moon, Sun, BrainCircuit, LogIn, UserPlus, Search } from "lucide-react";
 
 const DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell";
 
@@ -22,12 +25,16 @@ async function getErrorMessage(res: Response, fallback: string): Promise<string>
 }
 
 export default function Home() {
+  const { theme, toggle } = useTheme();
   const [history, setHistory] = useState<HistoryListItem[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageModel[]>([]);
   const [busy, setBusy] = useState(false);
   const [rateLimitUntil, setRateLimitUntil] = useState<number | null>(null);
   const [authUser, setAuthUser] = useState<{ name: string; email: string } | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const promptInputRef = useRef<PromptInputHandle>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
 
   const isLoggedIn = !!authUser;
 
@@ -68,13 +75,65 @@ export default function Home() {
     loadHistoryList();
   }, []);
 
+  // Close mobile drawer on outside click + lock body scroll
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target as Node)) {
+        setMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.body.style.overflow = prev;
+    };
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileMenuOpen(false);
+    };
+    const onNewChat = () => newChat();
+    const onOpenHistory = (e: Event) => {
+      const detail = (e as CustomEvent<{ id: string }>).detail;
+      if (detail?.id) openHistory(detail.id);
+    };
+    const onRename = () => {
+      if (!activeHistoryId) return;
+      const t = prompt("Enter a title for this conversation:");
+      if (t?.trim()) renameHistory(activeHistoryId, t.trim());
+    };
+    const onDelete = () => {
+      if (!activeHistoryId) return;
+      if (confirm("Delete this conversation?")) deleteHistory(activeHistoryId);
+    };
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("palette:new-chat", onNewChat);
+    window.addEventListener("palette:open-history", onOpenHistory);
+    window.addEventListener("palette:rename", onRename);
+    window.addEventListener("palette:delete", onDelete);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("palette:new-chat", onNewChat);
+      window.removeEventListener("palette:open-history", onOpenHistory);
+      window.removeEventListener("palette:rename", onRename);
+      window.removeEventListener("palette:delete", onDelete);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeHistoryId]);
+
   const newChat = () => {
     setActiveHistoryId(null);
     setMessages([]);
+    setMobileMenuOpen(false);
   };
 
   const openHistory = async (id: string) => {
     setActiveHistoryId(id);
+    setMobileMenuOpen(false);
     const res = await fetch(`/api/history/${id}`, { cache: "no-store" });
     if (!res.ok) return;
     const json = await res.json();
@@ -133,6 +192,22 @@ export default function Home() {
     const isRateLimited = rateLimitUntil !== null && now < rateLimitUntil;
     return isLoggedIn && !busy && !isRateLimited;
   }, [isLoggedIn, busy, rateLimitUntil]);
+
+  const markError = (content: string, retryPrompt?: string) => ({
+    typing: false,
+    content,
+    isError: true,
+    ...(retryPrompt ? { retryPrompt } : {}),
+  });
+
+  const handleRetry = (prompt: string) => {
+    sendPrompt({
+      prompt,
+      width: 1024,
+      height: 1024,
+      model: "flux",
+    });
+  };
 
   const enhancePrompt = async (prompt: string): Promise<string> => {
     const res = await fetch(`/api/chat`, {
@@ -216,7 +291,7 @@ export default function Home() {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === typingMsg.id
-                ? { ...m, typing: false, content: "Could not reach the server. Check your internet connection and try again." }
+                ? { ...m, ...markError("Could not reach the server. Check your internet connection and try again.", prompt) }
                 : m,
             ),
           );
@@ -226,12 +301,16 @@ export default function Home() {
         if (!res.ok) {
           const errText = await getErrorMessage(res, "Failed to generate batch. Please try again.");
           setMessages((prev) =>
-            prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
+            prev.map((m) => (m.id === typingMsg.id ? { ...m, ...markError(errText, prompt) } : m)),
           );
           return;
         }
 
         const json = await res.json();
+        const batchImages: Variation[] =
+          (json.images as Array<{ id?: string; url?: string; seed?: number }> | undefined)
+            ?.filter((img): img is { id: string; url: string; seed?: number } => Boolean(img.id && img.url))
+            .map((img) => ({ id: img.id, url: img.url, seed: img.seed ?? 0, prompt })) || [];
         setMessages((prev) =>
           prev.map((m) =>
             m.id === typingMsg.id ? {
@@ -240,12 +319,7 @@ export default function Home() {
               type: "text",
               content: `Generated ${batchCount} images:`,
               prompt: prompt,
-              variations: json.images?.map((img: any, i: number) => ({
-                id: img.id,
-                url: img.url,
-                seed: img.seed,
-                prompt: prompt,
-              })) || [],
+              variations: batchImages,
               historyId: json.historyId,
             } : m,
           ),
@@ -297,7 +371,7 @@ try {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === typingMsg.id
-                ? { ...m, typing: false, content: "Could not reach the server. Check your internet connection and try again." }
+                ? { ...m, ...markError("Could not reach the server. Check your internet connection and try again.", prompt) }
                 : m,
             ),
           );
@@ -322,7 +396,7 @@ try {
 
           const errText = await getErrorMessage(res, "Failed to generate. Please try again.");
           setMessages((prev) =>
-            prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
+            prev.map((m) => (m.id === typingMsg.id ? { ...m, ...markError(errText, prompt) } : m)),
           );
           return;
         }
@@ -388,207 +462,11 @@ try {
     await fetch("/api/auth/logout", { method: "POST" });
     setAuthUser(null);
     newChat();
+    toast.success("Logged out");
   };
 
-  // Regenerate image with same settings
-  const handleRegenerate = async (prompt: string, settings: ImageSettings) => {
-    if (busy) return;
-
-    const now = new Date().toISOString();
-    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
-    const typingMsg: ChatMessageModel = {
-      id: uid(),
-      role: "assistant",
-      content: prompt,
-      createdAt: now,
-      typing: true,
-    };
-    setMessages((prev) => [...prev, userMsg, typingMsg]);
-    setBusy(true);
-
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          model: DEFAULT_MODEL,
-          historyId: activeHistoryId,
-          width: settings.width,
-          height: settings.height,
-          seed: settings.seed,
-          model_type: settings.model,
-          style: settings.style,
-        }),
-      });
-
-      if (!res.ok) {
-        const errText = await getErrorMessage(res, "Failed to regenerate. Please try again.");
-        setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
-        );
-        return;
-      }
-
-      const json = await res.json();
-      const newHistoryId = json.historyId || null;
-
-      if (json.type === "image") {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === typingMsg.id ? {
-              ...m,
-              typing: false,
-              type: "image",
-              imageUrl: json.url,
-              settings: json.settings,
-              prompt: prompt,
-            } : m,
-          ),
-        );
-      }
-
-      if (newHistoryId && !activeHistoryId) {
-        setActiveHistoryId(newHistoryId);
-      }
-      await loadHistoryList();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Generate similar image with new seed
-  const handleGenerateSimilar = async (prompt: string, settings: ImageSettings) => {
-    if (busy) return;
-
-    const now = new Date().toISOString();
-    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
-    const typingMsg: ChatMessageModel = {
-      id: uid(),
-      role: "assistant",
-      content: `${prompt} (similar)`,
-      createdAt: now,
-      typing: true,
-    };
-    setMessages((prev) => [...prev, userMsg, typingMsg]);
-    setBusy(true);
-
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          model: DEFAULT_MODEL,
-          historyId: activeHistoryId,
-          width: settings.width,
-          height: settings.height,
-          seed: settings.seed,
-          model_type: settings.model,
-          style: settings.style,
-        }),
-      });
-
-      if (!res.ok) {
-        const errText = await getErrorMessage(res, "Failed to generate similar image. Please try again.");
-        setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
-        );
-        return;
-      }
-
-      const json = await res.json();
-      const newHistoryId = json.historyId || null;
-
-      if (json.type === "image") {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === typingMsg.id ? {
-              ...m,
-              typing: false,
-              type: "image",
-              imageUrl: json.url,
-              settings: json.settings,
-              prompt: prompt,
-            } : m,
-          ),
-        );
-      }
-
-      if (newHistoryId && !activeHistoryId) {
-        setActiveHistoryId(newHistoryId);
-      }
-      await loadHistoryList();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Create variation with modified seed
-  const handleCreateVariation = async (prompt: string, settings: ImageSettings) => {
-    if (busy) return;
-
-    const now = new Date().toISOString();
-    const userMsg: ChatMessageModel = { id: uid(), role: "user", content: prompt, createdAt: now };
-    const typingMsg: ChatMessageModel = {
-      id: uid(),
-      role: "assistant",
-      content: `${prompt} (variation)`,
-      createdAt: now,
-      typing: true,
-    };
-    setMessages((prev) => [...prev, userMsg, typingMsg]);
-    setBusy(true);
-
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          model: DEFAULT_MODEL,
-          historyId: activeHistoryId,
-          width: settings.width,
-          height: settings.height,
-          seed: settings.seed,
-          model_type: settings.model,
-          style: settings.style,
-        }),
-      });
-
-      if (!res.ok) {
-        const errText = await getErrorMessage(res, "Failed to create variation. Please try again.");
-        setMessages((prev) =>
-          prev.map((m) => (m.id === typingMsg.id ? { ...m, typing: false, content: errText } : m)),
-        );
-        return;
-      }
-
-      const json = await res.json();
-      const newHistoryId = json.historyId || null;
-
-      if (json.type === "image") {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === typingMsg.id ? {
-              ...m,
-              typing: false,
-              type: "image",
-              imageUrl: json.url,
-              settings: json.settings,
-              prompt: prompt,
-            } : m,
-          ),
-        );
-      }
-
-      if (newHistoryId && !activeHistoryId) {
-        setActiveHistoryId(newHistoryId);
-      }
-      await loadHistoryList();
-    } finally {
-      setBusy(false);
-    }
+const useSuggestion = (prompt: string) => {
+    promptInputRef.current?.setValue(prompt);
   };
 
   return (
@@ -606,42 +484,101 @@ try {
           onLogout={logout}
         />
 
+        {/* Mobile drawer */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-zoom-fade"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <div
+              ref={mobileMenuRef}
+              className="absolute left-0 top-0 bottom-0 h-full shadow-2xl animate-reveal-up"
+            >
+              <Sidebar
+                items={history}
+                activeId={activeHistoryId}
+                onNewChat={newChat}
+                onSelect={openHistory}
+                onDelete={deleteHistory}
+                onRename={renameHistory}
+                onTogglePin={togglePinHistory}
+                authUser={authUser}
+                onLogout={logout}
+                className="flex h-full w-[280px] flex-col"
+              />
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                className="absolute -right-12 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white text-zinc-600 shadow-lg dark:bg-zinc-800 dark:text-zinc-200"
+                title="Close menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex h-full flex-1 flex-col overflow-hidden">
-          <header className="flex items-center justify-between border-b border-gray-200/80 bg-white/80 px-6 py-4 backdrop-blur-md transition-all duration-300 dark:border-zinc-800/80 dark:bg-zinc-950/80">
+          <header className="flex items-center justify-between border-b border-gray-200/80 bg-white/80 px-4 py-4 backdrop-blur-md transition-all duration-300 sm:px-6 dark:border-zinc-800/80 dark:bg-zinc-950/80">
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(true)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 text-zinc-600 transition-colors hover:bg-gray-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 md:hidden"
+                title="Open menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20">
-                <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                  <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
-                  <polyline points="7.5 19.79 7.5 14.6 3 12"/>
-                  <polyline points="21 12 16.5 14.6 16.5 19.79"/>
-                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                  <line x1="12" y1="22.08" x2="12" y2="12"/>
-                </svg>
+                <BrainCircuit className="h-5 w-5 text-white" />
               </div>
               <div>
-                <span className="text-base font-semibold text-zinc-800 dark:text-zinc-100">AI Image Generator</span>
+                <span className="font-heading text-base font-semibold text-zinc-800 dark:text-zinc-100">
+                  AI Image Generator
+                </span>
                 <span className="hidden text-xs text-zinc-500 dark:text-zinc-400 sm:block">
                   Create stunning images with AI
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-1 text-sm">
-              <Link href="/explore" className="rounded-lg px-4 py-2 text-zinc-600 transition-all duration-200 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white">
-                Explore
-              </Link>
-              <Link href="/history" className="rounded-lg px-4 py-2 text-zinc-600 transition-all duration-200 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white">
-                Images
-              </Link>
-              <Link href="/settings" className="rounded-lg px-4 py-2 text-zinc-600 transition-all duration-200 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white">
-                Settings
-              </Link>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("palette:open"))}
+                className="group flex h-9 items-center gap-2 rounded-lg border border-zinc-200 px-3 text-zinc-500 transition-all duration-200 hover:border-indigo-300 hover:text-indigo-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-indigo-600 dark:hover:text-indigo-300"
+                title="Search (Ctrl+K)"
+              >
+                <Search className="h-4 w-4" />
+                <span className="hidden text-xs lg:inline">Search</span>
+                <kbd className="hidden rounded border border-zinc-200 px-1 text-[10px] font-medium text-zinc-400 group-hover:border-indigo-200 dark:border-zinc-700 sm:inline dark:group-hover:border-indigo-700">
+                  Ctrl K
+                </kbd>
+              </button>
+
+              <button
+                type="button"
+                onClick={toggle}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-600 transition-all duration-200 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+
               {!authUser && (
-                <div className="ml-2 flex items-center gap-2">
-                  <Link href="/login" className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-all duration-200 hover:border-gray-300 hover:bg-gray-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-900">
+                <div className="ml-2 hidden items-center gap-2 sm:flex">
+                  <Link
+                    href="/login"
+                    className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-all duration-200 hover:border-gray-300 hover:bg-gray-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+                  >
+                    <LogIn className="h-4 w-4" />
                     Login
                   </Link>
-                  <Link href="/signup" className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30">
+                  <Link
+                    href="/signup"
+                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30"
+                  >
+                    <UserPlus className="h-4 w-4" />
                     Sign up
                   </Link>
                 </div>
@@ -649,11 +586,12 @@ try {
             </div>
           </header>
 
-          <ChatWindow messages={messages} />
+          <ChatWindow messages={messages} onSuggestion={useSuggestion} onRetry={handleRetry} />
 
-          <PromptInput 
-            onSend={sendPrompt} 
-            onEnhance={enhancePrompt} 
+          <PromptInput
+            ref={promptInputRef}
+            onSend={sendPrompt}
+            onEnhance={enhancePrompt}
             onOCRResult={(text) => {
               const ocrMsg: ChatMessageModel = {
                 id: uid(),
@@ -664,7 +602,7 @@ try {
               };
               setMessages((prev) => [...prev, ocrMsg]);
             }}
-            disabled={!canSend} 
+            disabled={!canSend}
           />
 
           {!isLoggedIn && (

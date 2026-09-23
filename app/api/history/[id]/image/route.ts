@@ -15,7 +15,6 @@ async function getSessionUserId() {
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
   if (!id || !ObjectId.isValid(id)) {
@@ -24,11 +23,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
   const db = await getDb();
   const row = await db.collection("image_history").findOne(
-    { _id: new ObjectId(id), userId },
-    { projection: { imageBase64: 1, mimeType: 1 } },
+    { _id: new ObjectId(id) },
+    { projection: { imageBase64: 1, mimeType: 1, userId: 1, public: 1 } },
   );
 
-  if (!row?.imageBase64) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  // Images are viewable when they belong to the viewer, are explicitly public,
+  // or are legacy records (created before the public flag existed). Private
+  // images (public === false) are only viewable by their owner.
+  const viewable = Boolean(userId && row?.userId === userId) || row?.public !== false;
+  if (!row?.imageBase64 || !viewable) return NextResponse.json({ error: "Not found." }, { status: 404 });
 
   const bytes = Buffer.from(row.imageBase64, "base64");
   return new Response(bytes, {

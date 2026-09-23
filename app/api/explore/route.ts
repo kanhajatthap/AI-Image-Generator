@@ -17,16 +17,17 @@ export async function GET(req: Request) {
     await db.collection("image_history").createIndex({ createdAt: -1 });
     await db.collection("image_history").createIndex({ prompt: "text" });
 
-    const query: any = {
+    const query: Record<string, unknown> = {
       mimeType: { $ne: "text/plain" },
       imageBase64: { $exists: true },
+      public: { $ne: false },
     };
 
     if (q) {
       query.prompt = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
     }
 
-    let sortOption: any = {};
+    let sortOption: Record<string, 1 | -1> = {};
     switch (sort) {
       case "popular":
         sortOption = { createdAt: -1 };

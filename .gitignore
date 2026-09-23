@@ -42,3 +42,9 @@ next-env.d.ts
 
 # playwright test artifacts
 .playwright-mcp/
+
+# local dev artifacts
+dev-server.log
+dev-server.*.log
+/shots/
+*.log

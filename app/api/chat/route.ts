@@ -224,14 +224,16 @@ export async function POST(req: Request) {
           uploadedImageUrl: `data:${imageMimeType};base64,${uploadedImageBase64}`,
           prompt: visionPrompt,
         }, { status: 200 });
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("[API CHAT] OCR API error:", error);
-        console.error("[API CHAT] Error stack:", error?.stack);
+        const msg = error instanceof Error ? error.message : String(error);
+        const stack = error instanceof Error ? error.stack : undefined;
+        console.error("[API CHAT] Error stack:", stack);
         return NextResponse.json(
           {
             success: false,
             error: "Failed to analyze image.",
-            details: error?.message || String(error)
+            details: msg
           },
           { status: 500 }
         );
@@ -257,6 +259,7 @@ export async function POST(req: Request) {
           type: "image",
           imageBase64: base64Data,
           mimeType,
+          public: true,
           createdAt: new Date(),
         });
 
@@ -346,11 +349,13 @@ export async function POST(req: Request) {
       }, { status: 200 });
     }
 
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[API CHAT] Unhandled error:", e);
-    console.error("[API CHAT] Error stack:", e?.stack);
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error("[API CHAT] Error stack:", stack);
     return NextResponse.json(
-      { success: false, error: "Server error.", details: String(e) },
+      { success: false, error: "Server error.", details: msg },
       { status: 500 },
     );
   }

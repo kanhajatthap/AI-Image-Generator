@@ -2,6 +2,23 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Plus,
+  Pin,
+  Star,
+  MessageSquare,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  LogOut,
+  LogIn,
+  UserPlus,
+  Home,
+  Images,
+  Compass,
+  Settings,
+  Info,
+} from "lucide-react";
 
 export type HistoryListItem = {
   id: string;
@@ -21,6 +38,7 @@ export function Sidebar({
   onTogglePin,
   authUser,
   onLogout,
+  className,
 }: {
   items: HistoryListItem[];
   activeId: string | null;
@@ -31,6 +49,7 @@ export function Sidebar({
   onTogglePin?: (id: string) => void;
   authUser: { name: string; email: string } | null;
   onLogout?: () => void;
+  className?: string;
 }) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,16 +99,13 @@ export function Sidebar({
   };
 
   return (
-    <aside className="hidden h-screen w-[280px] shrink-0 border-r border-gray-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950/50 md:flex md:flex-col">
+    <aside className={`${className ?? "hidden md:flex"} h-screen w-[280px] shrink-0 border-r border-gray-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950/50 md:flex-col`}>
       <button
         type="button"
         onClick={onNewChat}
         className="mb-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-500/30"
       >
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
+        <Plus className="h-4 w-4" />
         New Chat
       </button>
 
@@ -98,7 +114,16 @@ export function Sidebar({
         <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">{items.length}</span>
       </div>
 
-      <div className="sidebar-scroll flex-1 overflow-y-auto space-y-1.5">
+      <div className="sidebar-scroll flex-1 space-y-1.5 overflow-y-auto">
+        {items.length === 0 && (
+          <div className="rounded-xl border border-dashed border-zinc-200 px-4 py-8 text-center dark:border-zinc-700">
+            <MessageSquare className="mx-auto h-6 w-6 text-zinc-300 dark:text-zinc-600" />
+            <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">No conversations yet</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-600">
+              Start a new chat and your generations will appear here.
+            </p>
+          </div>
+        )}
         {items.map((item) => {
           const active = item.id === activeId;
           const label = item.title || item.prompt || "Untitled";
@@ -118,19 +143,9 @@ export function Sidebar({
               >
                 <div className="flex items-center gap-2">
                   {item.pinned ? (
-                    <svg
-                      className="h-3.5 w-3.5 shrink-0 text-amber-500"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      stroke="currentColor"
-                      strokeWidth="1"
-                    >
-                      <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
-                    </svg>
+                    <Star className="h-3.5 w-3.5 shrink-0 fill-amber-500 text-amber-500" />
                   ) : (
-                    <svg className="h-3.5 w-3.5 shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                    </svg>
+                    <MessageSquare className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
                   )}
 
                   {isEditing ? (
@@ -175,15 +190,7 @@ export function Sidebar({
                       "dark:hover:bg-zinc-950 dark:hover:text-zinc-200",
                     ].join(" ")}
                   >
-                    <svg
-                      className="h-4 w-4"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <circle cx="5" cy="12" r="1.6" />
-                      <circle cx="12" cy="12" r="1.6" />
-                      <circle cx="19" cy="12" r="1.6" />
-                    </svg>
+                    <MoreHorizontal className="h-4 w-4" />
                   </button>
 
                   {menuOpenId === item.id && (
@@ -199,18 +206,7 @@ export function Sidebar({
                           }}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-900"
                         >
-                          <svg
-                            className="h-4 w-4 text-zinc-500 dark:text-zinc-400"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M12 17v5" />
-                            <path d="M8 3h8l1 6-5 5h-2L7 9l1-6Z" />
-                          </svg>
+                          <Pin className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
                           {item.pinned ? "Unpin" : "Pin"}
                         </button>
                       )}
@@ -225,18 +221,7 @@ export function Sidebar({
                           }}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-900"
                         >
-                          <svg
-                            className="h-4 w-4 text-zinc-500 dark:text-zinc-400"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M12 20h9" />
-                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                          </svg>
+                          <Pencil className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
                           Rename
                         </button>
                       )}
@@ -252,21 +237,7 @@ export function Sidebar({
                           }}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
                         >
-                          <svg
-                            className="h-4 w-4"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M3 6h18" />
-                            <path d="M8 6V4h8v2" />
-                            <path d="M6 6l1 16h10l1-16" />
-                            <path d="M10 11v6" />
-                            <path d="M14 11v6" />
-                          </svg>
+                          <Trash2 className="h-4 w-4" />
                           Delete
                         </button>
                       )}
@@ -281,19 +252,45 @@ export function Sidebar({
 
       <div className="mt-3 border-t border-zinc-200 pt-3 text-sm dark:border-zinc-800">
         <nav className="flex flex-col gap-1">
-          <Link href="/" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+          <Link href="/" className="flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+            <Home className="h-4 w-4 text-zinc-400" />
             Home
           </Link>
-          <Link href="/explore" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+          <Link href="/explore" className="flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+            <Compass className="h-4 w-4 text-zinc-400" />
             Explore
           </Link>
-          <Link href="/history" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+          <Link href="/history" className="flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+            <Images className="h-4 w-4 text-zinc-400" />
             Images
           </Link>
-          <Link href="/settings" className="rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+          <Link href="/settings" className="flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+            <Settings className="h-4 w-4 text-zinc-400" />
             Settings
           </Link>
+          <Link href="/about" className="flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+            <Info className="h-4 w-4 text-zinc-400" />
+            About this project
+          </Link>
         </nav>
+        {!authUser && (
+          <div className="mt-2 flex flex-col gap-1 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <Link
+              href="/login"
+              className="flex items-center justify-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              <LogIn className="h-4 w-4" />
+              Login
+            </Link>
+            <Link
+              href="/signup"
+              className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 px-3 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/30"
+            >
+              <UserPlus className="h-4 w-4" />
+              Sign up
+            </Link>
+          </div>
+        )}
       </div>
 
       {authUser && onLogout && (
@@ -316,19 +313,7 @@ export function Sidebar({
             onClick={onLogout}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white cursor-pointer"
           >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-              />
-            </svg>
+            <LogOut className="h-4 w-4" />
             Logout
           </button>
         </div>

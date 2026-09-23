@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const db = await getDb();
   const collection = db.collection("image_history");
 
-  const match: any = { userId: session.userId };
+  const match: Record<string, unknown> = { userId: session.userId };
   if (q) {
     match.prompt = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
   }
@@ -36,5 +36,8 @@ export async function GET(req: Request) {
     ])
     .toArray();
 
-  return NextResponse.json({ prompts: rows.map((r: any) => r.prompt) }, { status: 200 });
+  return NextResponse.json(
+    { prompts: rows.map((r) => r.prompt) },
+    { status: 200 }
+  );
 }

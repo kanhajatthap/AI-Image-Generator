@@ -1,0 +1,841 @@
+"use client";
+
+import { motion } from "motion/react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  Binary,
+  Boxes,
+  Braces,
+  CheckCircle2,
+  Copy,
+  Cpu,
+  Database,
+  DatabaseZap,
+  FileText,
+  FolderTree,
+  Gauge,
+  GalleryVerticalEnd,
+  Globe,
+  Hash,
+  Image,
+  ImageUp,
+  KeyRound,
+  Layers,
+  LayoutGrid,
+  Lock,
+  MessageSquare,
+  Moon,
+  Palette,
+  RefreshCcw,
+  Rocket,
+  ScanText,
+  Search,
+  Server,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  Timer,
+  Users,
+  Wand2,
+  Waypoints,
+  Zap,
+} from "lucide-react";
+
+const NAV = [
+  "Overview",
+  "Tech Stack",
+  "Workflow",
+  "Architecture",
+  "Data Model",
+  "API Endpoints",
+  "Security",
+  "Features",
+  "UI & UX",
+  "Setup",
+];
+
+const STATS = [
+  { icon: Rocket, label: "Next.js", value: "16.2.2" },
+  { icon: Braces, label: "React", value: "19.2.4" },
+  { icon: Server, label: "API Routes", value: "14" },
+  { icon: Boxes, label: "Components", value: "17" },
+  { icon: Database, label: "Database", value: "MongoDB" },
+  { icon: Cpu, label: "AI Engine", value: "Pollinations" },
+];
+
+const STACK = [
+  {
+    icon: Boxes,
+    title: "Framework",
+    accent: "from-indigo-500 to-purple-600",
+    items: [
+      { name: "Next.js 16.2.2", detail: "App Router · Route Handlers · SSR/CSR" },
+      { name: "React 19.2.4", detail: "Server + client components, hooks" },
+      { name: "TypeScript 5", detail: "Strict typing across the entire app" },
+      { name: "Turbopack", detail: "Next.js native bundler / dev server" },
+      { name: "next/font", detail: "Geist · Geist Mono · Space Grotesk" },
+    ],
+  },
+  {
+    icon: Palette,
+    title: "Styling & UI",
+    accent: "from-fuchsia-500 to-pink-500",
+    items: [
+      { name: "Tailwind CSS v4", detail: "Utility-first, @theme tokens, dark variant" },
+      { name: "shadcn/ui", detail: "base-nova style, headless primitives" },
+      { name: "@base-ui/react", detail: "Accessible UI primitives" },
+      { name: "lucide-react", detail: "Consistent icon set" },
+      { name: "tw-animate-css", detail: "Animation utilities" },
+    ],
+  },
+  {
+    icon: Zap,
+    title: "Motion & Feedback",
+    accent: "from-amber-500 to-orange-600",
+    items: [
+      { name: "motion (Framer Motion)", detail: "Page transitions, entrances, micro-animations" },
+      { name: "sonner", detail: "Toast notifications, rich colors" },
+      { name: "class-variance-authority", detail: "Reusable variant styling" },
+      { name: "clsx + tailwind-merge", detail: "Smart class merging" },
+    ],
+  },
+  {
+    icon: Server,
+    title: "Backend & Data",
+    accent: "from-emerald-500 to-teal-600",
+    items: [
+      { name: "MongoDB Driver 7.x", detail: "Official driver, cached connection" },
+      { name: "MongoDB Atlas", detail: "Managed cloud database cluster" },
+      { name: "jose (JWT)", detail: "HS256 session signing & verification" },
+      { name: "bcryptjs", detail: "Passwords hashed with 10 salt rounds" },
+    ],
+  },
+  {
+    icon: Cpu,
+    title: "AI & Media",
+    accent: "from-sky-500 to-cyan-600",
+    items: [
+      { name: "Pollinations AI", detail: "image + text generation endpoints" },
+      { name: "OCR.space", detail: "Extract text from uploaded images" },
+      { name: "sharp", detail: "Image processing + SVG watermark overlay" },
+    ],
+  },
+  {
+    icon: Gauge,
+    title: "Performance",
+    accent: "from-rose-500 to-red-500",
+    items: [
+      { name: "In-memory image cache", detail: "30-min TTL, max 200 entries" },
+      { name: "In-memory rate limiter", detail: "10 requests / minute per user" },
+      { name: "Pollinations retry", detail: "45s timeout, 1 automatic retry" },
+      { name: "Blur-up placeholders", detail: "Lazy image loading + shimmer" },
+    ],
+  },
+];
+
+const FLOW = [
+  {
+    icon: MessageSquare,
+    title: "1 · Compose & submit",
+    detail: "User types a prompt (or uploads an image) in the chat box and hits send.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "2 · Authenticate",
+    detail: "Every request verifies the httpOnly JWT session cookie (jose HS256, 7-day expiry).",
+  },
+  {
+    icon: Waypoints,
+    title: "3 · Route the intent",
+    detail: "The server detects the request type: image keywords → image, uploaded image → vision/OCR, 'similar' → variations, otherwise → text.",
+  },
+  {
+    icon: Cpu,
+    title: "4 · Call Pollinations",
+    detail: "Image: build a signed URL with width/height/seed/model, fetch (45s timeout + retry). Text: POST to text.pollinations.ai and parse the reply.",
+  },
+  {
+    icon: Database,
+    title: "5 · Persist",
+    detail: "Result is base64-stored in MongoDB image_history (with prompt, model, mimeType, seed, messages).",
+  },
+  {
+    icon: Sparkles,
+    title: "6 · Render",
+    detail: "Response streams back — image fades in with a blur-up, text renders cleanly, both with copy/download actions.",
+  },
+];
+
+const WORKFLOW_PIPELINE = [
+  { name: "Intake", detail: "Client POST → Route Handler → session verify" },
+  { name: "Intent", detail: "isImageGenerationRequest() keyword classifier" },
+  { name: "Generate", detail: "Pollinations fetch with timeout + retry" },
+  { name: "Enrich", detail: "Watermark (sharp), 30-min cache, metadata" },
+  { name: "Store", detail: "image_history insert/update in MongoDB" },
+  { name: "Serve", detail: "data:URL or /api/history/:id/image bytes" },
+];
+
+const DATABASE = [
+  {
+    name: "users",
+    icon: Users,
+    note: "Accounts & credentials",
+    indexes: "Indexes: { email: 1 } unique",
+    fields: [
+      { field: "name", type: "string", desc: "Display name" },
+      { field: "email", type: "string", desc: "Unique index, lowercase" },
+      { field: "passwordHash", type: "string", desc: "bcrypt, 10 rounds" },
+      { field: "createdAt / updatedAt", type: "date", desc: "Timestamps" },
+    ],
+  },
+  {
+    name: "image_history",
+    icon: GalleryVerticalEnd,
+    note: "One document per generation / conversation",
+    indexes: "Indexes: { userId: 1, createdAt: -1 } · { createdAt: -1 } · { prompt: 'text' }",
+    fields: [
+      { field: "userId", type: "objectId", desc: "Owner reference" },
+      { field: "prompt / title", type: "string", desc: "Prompt + optional custom title" },
+      { field: "type", type: "string", desc: "image · text · vision · batch" },
+      { field: "model / mimeType", type: "string", desc: "e.g. flux, pollinations-text" },
+      { field: "imageBase64", type: "string", desc: "Stored image data" },
+      { field: "generatedText", type: "string", desc: "Text response payload" },
+      { field: "seed / width / height / style", type: "mixed", desc: "Generation settings" },
+      { field: "batchResults", type: "array", desc: "Batch variants with seeds" },
+      { field: "messages", type: "array", desc: "Conversation thread" },
+      { field: "public / pinned", type: "bool", desc: "Visibility + pin flag" },
+      { field: "createdAt / updatedAt", type: "date", desc: "Timestamps" },
+    ],
+  },
+];
+
+const API = [
+  { method: "POST", path: "/api/auth/signup", desc: "Create account, auto-login", auth: false },
+  { method: "POST", path: "/api/auth/login", desc: "Login with email + password", auth: false },
+  { method: "POST", path: "/api/auth/logout", desc: "Clear session cookie", auth: false },
+  { method: "GET", path: "/api/auth/me", desc: "Return current user from JWT", auth: false },
+  { method: "POST", path: "/api/chat", desc: "Main chat: image / text / vision / similar", auth: true },
+  { method: "POST", path: "/api/generate", desc: "Generate with settings + watermark + cache", auth: true },
+  { method: "POST", path: "/api/batch-generate", desc: "Generate 1–8 images in parallel", auth: true },
+  { method: "POST", path: "/api/variations", desc: "N variations with distinct seeds", auth: true },
+  { method: "GET", path: "/api/explore", desc: "Public gallery: search · sort · paginate", auth: false },
+  { method: "GET", path: "/api/history", desc: "List user history (pinned first)", auth: true },
+  { method: "POST", path: "/api/history", desc: "Manually save an image", auth: true },
+  { method: "PATCH", path: "/api/history", desc: "Rename or pin an item", auth: true },
+  { method: "DELETE", path: "/api/history", desc: "Delete an item", auth: true },
+  { method: "GET", path: "/api/history/:id", desc: "Single history detail", auth: true },
+  { method: "GET", path: "/api/history/:id/image", desc: "Raw image bytes (owner or public)", auth: false },
+  { method: "GET", path: "/api/prompt-history", desc: "Recent unique prompts (autocomplete)", auth: true },
+  { method: "GET", path: "/api/test", desc: "Health check: { test: 'API working' }", auth: false },
+];
+
+const SECURITY = [
+  {
+    icon: KeyRound,
+    title: "Password hashing",
+    detail: "bcryptjs with 10 salt rounds. Passwords are never stored in plain text.",
+  },
+  {
+    icon: Lock,
+    title: "Secure sessions",
+    detail: "JWT (HS256, 7-day expiry) in an httpOnly + sameSite lax cookie, secure flag in production.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Ownership enforcement",
+    detail: "Every history read/rename/delete filters by userId — you only ever touch your own data.",
+  },
+  {
+    icon: Image,
+    title: "Smart image visibility",
+    detail: "public !== false images are viewable; explicitly private ones are owner-only. Legacy rows stay public.",
+  },
+  {
+    icon: Timer,
+    title: "Rate limiting",
+    detail: "In-memory limiter: 10 requests per minute per user, with retry-after seconds.",
+  },
+  {
+    icon: FileText,
+    title: "Server-side validation",
+    detail: "Prompt presence, type coercion, mime checks, ObjectId validation on every mutation.",
+  },
+];
+
+const FEATURES = [
+  {
+    icon: Wand2,
+    title: "Image generation",
+    items: ["Staged 'Generating…' progress UI", "Width / height / seed / model controls", "Style presets + Enhance"],
+  },
+  {
+    icon: MessageSquare,
+    title: "AI chat (text)",
+    items: ["Auto-routed text responses", "'Thinking…' typing indicator", "Copy + download text"],
+  },
+  {
+    icon: ScanText,
+    title: "Vision / OCR",
+    items: ["Upload any image", "OCR.space extracts the text", "Saved as vision chat history"],
+  },
+  {
+    icon: Layers,
+    title: "Similar & variations",
+    items: ["One-click 'Similar'", "Up to 6 seed variations", "Copy prompt / download each"],
+  },
+  {
+    icon: ImageUp,
+    title: "Batch mode",
+    items: ["1–8 images at once", "Parallel Pollinations requests", "Variation grid in chat"],
+  },
+  {
+    icon: GalleryVerticalEnd,
+    title: "History library",
+    items: ["Pin · rename · delete", "Pinned items float to top", "Open & resume any chat"],
+  },
+  {
+    icon: Globe,
+    title: "Explore gallery",
+    items: ["Public images from all users", "Search + latest/popular/random", "Trending prompt chips"],
+  },
+  {
+    icon: Search,
+    title: "Command palette",
+    items: ["Ctrl/Cmd + K anywhere", "Jump to pages / recent images", "New chat · history actions"],
+  },
+];
+
+const UX = [
+  { icon: Moon, title: "Dark mode", detail: "Flash-free theme script + persisted choice, no hydration mismatch." },
+  { icon: Sparkles, title: "Aurora gradients", detail: "Glassmorphism hero, glow-border cards, indigo→purple→fuchsia accents." },
+  { icon: Image, title: "Blur-up images", detail: "Shimmer skeleton while loading, smooth blur-in when ready." },
+  { icon: RefreshCcw, title: "Friendly errors", detail: "Every Pollinations failure maps to a human message with a Retry action." },
+  { icon: Copy, title: "Copy & download", detail: "One-click copy of prompts/text, download of generated images." },
+  { icon: LayoutGrid, title: "Animated layout", detail: "Motion page transitions, staggered card entrances." },
+];
+
+const ENV = [
+  { name: "MONGODB_URI", required: true, detail: "MongoDB Atlas connection string" },
+  { name: "MONGODB_DB", required: false, detail: "Database name (default: ai_image_generator)" },
+  { name: "SESSION_SECRET", required: true, detail: "Secret used to sign JWTs" },
+  { name: "OCR_SPACE_API_KEY", required: true, detail: "Key for the vision / OCR feature" },
+];
+
+const COMMANDS = [
+  { cmd: "npm run dev", detail: "Start the development server (hot reload)" },
+  { cmd: "npm run build", detail: "Create a production build" },
+  { cmd: "npm run start", detail: "Serve the production build" },
+  { cmd: "npm run lint", detail: "Run ESLint over the codebase" },
+  { cmd: "npm run clean", detail: "Delete .next to reset a corrupt cache" },
+];
+
+const COMPONENT_TREE = [
+  { level: 0, name: "app/layout.tsx", detail: "Root layout · fonts · ThemeProvider · GlobalPalette · Toaster" },
+  { level: 1, name: "app/page.tsx", detail: "Home workspace (chat stream + sidebar skeleton)" },
+  { level: 2, name: "ChatWindow.tsx", detail: "Hero, suggestions, message list" },
+  { level: 2, name: "ChatMessage.tsx", detail: "User/AI bubbles, typing/stages, variations, lightbox" },
+  { level: 2, name: "PromptInput.tsx", detail: "Textarea, image upload, batch toggle, enhance" },
+  { level: 2, name: "Sidebar.tsx", detail: "History list, pin/rename/delete, navigation" },
+  { level: 1, name: "app/explore", detail: "Public gallery · trending · search · sort" },
+  { level: 1, name: "app/history", detail: "Personal library · lightbox · regenerate actions" },
+  { level: 1, name: "app/settings · login · signup", detail: "Preference, auth pages with password strength" },
+  { level: 1, name: "components/ui", detail: "Lightbox · BlurImage · GenerationStages · GlobalPalette · ThemeProvider" },
+  { level: 0, name: "lib/", detail: "pollinations · session · mongodb · rateLimit · cache · watermark · utils" },
+  { level: 0, name: "app/api/", detail: "14 route handlers across auth, chat, gallery, history" },
+];
+
+const METHOD_COLOR: Record<string, string> = {
+  GET: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  POST: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
+  PATCH: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  DELETE: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+};
+
+function Section({
+  id,
+  index,
+  title,
+  subtitle,
+  children,
+}: {
+  id: string;
+  index: string;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section id={id} className="scroll-mt-28">
+      <div className="mb-6 flex items-start gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-sm font-bold text-white shadow-lg shadow-indigo-500/30">
+          {index}
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">{title}</h2>
+          {subtitle && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{subtitle}</p>}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={`rounded-2xl border border-zinc-200 bg-white/80 p-5 backdrop-blur-sm transition-colors hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:border-zinc-700 ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+export default function AboutPage() {
+  return (
+    <div className="relative min-h-screen overflow-x-hidden bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="aurora-blob aurora-blob-1" />
+        <div className="aurora-blob aurora-blob-2" />
+        <div className="aurora-blob aurora-blob-3" />
+      </div>
+
+      <div className="relative mx-auto max-w-5xl px-4 py-12 sm:px-6">
+        <header>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="mb-6 flex flex-wrap items-center justify-between gap-4"
+          >
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-4 py-1.5 text-xs font-medium text-zinc-600 shadow-sm backdrop-blur-sm transition-colors hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:text-white"
+            >
+              <ArrowRight className="h-3.5 w-3.5 rotate-180" />
+              Back to the app
+            </Link>
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              <Globe className="h-3.5 w-3.5" />
+              Public — no login required
+            </span>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.55, delay: 0.05 }}
+            className="glow-border rounded-3xl p-[1px]"
+          >
+            <div className="rounded-3xl bg-white/70 p-8 backdrop-blur-xl sm:p-12 dark:bg-zinc-950/60">
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-white shadow-lg shadow-indigo-500/30">
+                <Sparkles className="h-3.5 w-3.5" />
+                Project documentation
+              </div>
+              <h1 className="text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl">
+                <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 bg-clip-text text-transparent">
+                  AI Image Generator
+                </span>
+                {" "}— inside the project
+              </h1>
+              <p className="mt-4 max-w-2xl text-base leading-relaxed text-zinc-600 dark:text-zinc-300">
+                A full-stack AI image &amp; chat application. Users write prompts, upload photos or batch-generate
+                images, and everything is saved to a personal, shareable gallery. This page documents exactly how it
+                is built — every library, every route, every decision — end to end.
+              </p>
+
+              <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {STATS.map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded-2xl border border-zinc-200 bg-white p-4 text-center shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60"
+                  >
+                    <s.icon className="mx-auto h-4 w-4 text-indigo-500 dark:text-indigo-400" />
+                    <div className="mt-2 text-lg font-bold text-zinc-900 dark:text-white">{s.value}</div>
+                    <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      {s.label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+
+          <motion.nav
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="mt-8 flex flex-wrap gap-2"
+            aria-label="Sections"
+          >
+            {NAV.map((item) => (
+              <a
+                key={item}
+                href={`#${item.toLowerCase().replace(/[&]/g, "").replace(/\s+/g, "-")}`}
+                className="rounded-full border border-zinc-200 bg-white/70 px-4 py-1.5 text-xs font-medium text-zinc-600 shadow-sm backdrop-blur-sm transition-colors hover:border-indigo-300 hover:text-indigo-600 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-indigo-500/50 dark:hover:text-indigo-300"
+              >
+                {item}
+              </a>
+            ))}
+          </motion.nav>
+        </header>
+
+        <main className="mt-14 space-y-20">
+          <Section id="overview" index="01" title="Overview" subtitle="What this project actually is">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                  <MessageSquare className="h-4 w-4 text-indigo-500" />
+                  What it does
+                </h3>
+                <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  <li>· Generate AI images from a text prompt via Pollinations</li>
+                  <li>· Ask questions and get AI text replies in the same chat</li>
+                  <li>· Upload an image to run OCR — the extracted text comes back as an answer</li>
+                  <li>· Batch-generate 1–8 images, create variations, and download results</li>
+                </ul>
+              </Card>
+              <Card>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                  <DatabaseZap className="h-4 w-4 text-emerald-500" />
+                  How it&apos;s stored
+                </h3>
+                <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  <li>· User accounts in a dedicated <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-[12px] dark:bg-zinc-800">users</code> collection</li>
+                  <li>· Every generation saved to <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-[12px] dark:bg-zinc-800">image_history</code> (images, text, vision, batch)</li>
+                  <li>· Images stored as base64, public by default so the gallery can show them</li>
+                  <li>· Private images stay owner-only via a visibility check on every read</li>
+                </ul>
+              </Card>
+            </div>
+          </Section>
+
+          <Section
+            id="tech-stack"
+            index="02"
+            title="Tech Stack"
+            subtitle="Every library, grouped by responsibility — nothing hidden"
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              {STACK.map((group) => (
+                <Card key={group.title}>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${group.accent} text-white shadow-md`}
+                    >
+                      <group.icon className="h-5 w-5" />
+                    </div>
+                    <h3 className="text-sm font-bold text-zinc-900 dark:text-white">{group.title}</h3>
+                  </div>
+                  <ul className="mt-4 space-y-2.5">
+                    {group.items.map((item) => (
+                      <li key={item.name} className="flex items-start justify-between gap-3 text-sm">
+                        <span className="font-medium text-zinc-800 dark:text-zinc-200">{item.name}</span>
+                        <span className="hidden text-right text-[12px] leading-relaxed text-zinc-500 sm:block dark:text-zinc-400">
+                          {item.detail}
+                        </span>
+                        <span className="text-right text-[12px] leading-relaxed text-zinc-500 sm:hidden dark:text-zinc-400">
+                          {item.detail}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              ))}
+            </div>
+            <p className="mt-4 text-xs text-zinc-400 dark:text-zinc-500">
+              Note: <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">axios</code> and{" "}
+              <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">@google/generative-ai</code> are installed in
+              package.json but are not used by the current code — the app talks to Pollinations and OCR.space directly.
+            </p>
+          </Section>
+
+          <Section
+            id="workflow"
+            index="03"
+            title="Workflow"
+            subtitle="From prompt to pixels — the full request pipeline"
+          >
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {FLOW.map((step) => (
+                <Card key={step.title}>
+                  <step.icon className="h-5 w-5 text-indigo-500 dark:text-indigo-400" />
+                  <h4 className="mt-3 text-sm font-semibold text-zinc-900 dark:text-white">{step.title}</h4>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">{step.detail}</p>
+                </Card>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-3 rounded-2xl border border-zinc-200 bg-white/60 p-5 sm:grid-cols-3 lg:grid-cols-6 dark:border-zinc-800 dark:bg-zinc-900/40">
+              {WORKFLOW_PIPELINE.map((s, i) => (
+                <div key={s.name} className="flex items-start gap-2">
+                  <span className="mt-0.5 text-[11px] font-bold text-fuchsia-500">{i + 1}.</span>
+                  <div>
+                    <div className="text-[13px] font-semibold text-zinc-800 dark:text-zinc-200">{s.name}</div>
+                    <div className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{s.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section
+            id="architecture"
+            index="04"
+            title="Architecture"
+            subtitle="App Router structure · server ↔ client split · shared libs"
+          >
+            <Card>
+              <div className="flex items-center gap-2">
+                <FolderTree className="h-4 w-4 text-indigo-500" />
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Project structure</h3>
+              </div>
+              <div className="mt-4 space-y-1.5">
+                {COMPONENT_TREE.map((row) => (
+                  <div
+                    key={row.name}
+                    className="flex flex-col gap-0.5 rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:bg-zinc-950/40"
+                    style={{ marginLeft: `${row.level * 18}px` }}
+                  >
+                    <code className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">{row.name}</code>
+                    <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">{row.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <Card>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                  <Braces className="h-4 w-4 text-indigo-500" />
+                  Server vs client
+                </h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  Pages are statically server-rendered; all interactive components (chat, prompt input, lightbox,
+                  palette) are <code className="rounded bg-zinc-100 px-1.5 dark:bg-zinc-800">{"\"use client\""}</code>{" "}
+                  components. API work lives entirely in Route Handlers with the Node.js runtime and force-dynamic
+                  rendering.
+                </p>
+              </Card>
+              <Card>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                  <Binary className="h-4 w-4 text-emerald-500" />
+                  Shared libraries
+                </h3>
+                <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/pollinations</code> — fetch, 45s timeout, 1 retry, friendly errors</li>
+                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/session</code> — JWT create/verify</li>
+                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/mongodb</code> — cached global connection</li>
+                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/rateLimit · cache · watermark</code> — infra helpers</li>
+                </ul>
+              </Card>
+            </div>
+          </Section>
+
+          <Section
+            id="data-model"
+            index="05"
+            title="Data Model"
+            subtitle="Two MongoDB collections power the entire app"
+          >
+            <div className="grid gap-4 lg:grid-cols-2">
+              {DATABASE.map((col) => (
+                <Card key={col.name}>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                      <col.icon className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-zinc-900 dark:text-white">{col.name}</h3>
+                      <p className="text-[11.5px] text-zinc-500 dark:text-zinc-400">{col.note}</p>
+                    </div>
+                  </div>
+                  <ul className="mt-4 space-y-1.5">
+                    {col.fields.map((f) => (
+                      <li
+                        key={f.field}
+                        className="flex items-start justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-950/40"
+                      >
+                        <code className="text-[11.5px] font-medium text-indigo-600 dark:text-indigo-300">{f.field}</code>
+                        <span className="text-[11px] text-zinc-500 sm:hidden dark:text-zinc-400">{f.desc}</span>
+                        <span className="hidden text-[11px] text-zinc-500 sm:block dark:text-zinc-400">{f.desc}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {col.indexes && (
+                    <p className="mt-3 rounded-lg border border-zinc-200 bg-emerald-500/5 px-3 py-2 text-[11px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                      {col.indexes}
+                    </p>
+                  )}
+                </Card>
+              ))}
+            </div>
+          </Section>
+
+          <Section id="api-endpoints" index="06" title="API Endpoints" subtitle="14 Route Handlers — each one documented">
+            <div className="overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800">
+              <div className="max-h-[560px] overflow-y-auto">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
+                    <tr className="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-4 py-3 font-semibold">Method</th>
+                      <th className="px-4 py-3 font-semibold">Path</th>
+                      <th className="hidden px-4 py-3 font-semibold md:table-cell">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {API.map((row) => (
+                      <tr key={row.method + row.path} className="bg-white hover:bg-zinc-50 dark:bg-zinc-950/40 dark:hover:bg-zinc-900/60">
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={`inline-block rounded-md border px-2 py-0.5 text-[11px] font-bold ${METHOD_COLOR[row.method]}`}
+                          >
+                            {row.method}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[11.5px] text-zinc-700 dark:text-zinc-200">{row.path}</td>
+                        <td className="hidden px-4 py-2.5 text-[12px] text-zinc-500 md:table-cell dark:text-zinc-400">
+                          {row.desc}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-zinc-400 dark:text-zinc-500">
+              <span className="font-medium text-indigo-500">14 route files</span> — including auth flows, generation, gallery and an
+              OCR health route for raw image bytes.
+            </p>
+          </Section>
+
+          <Section id="security" index="07" title="Security" subtitle="Passwords, sessions, ownership and abuse protection">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {SECURITY.map((item) => (
+                <Card key={item.title}>
+                  <item.icon className="h-5 w-5 text-emerald-500 dark:text-emerald-400" />
+                  <h4 className="mt-3 text-sm font-semibold text-zinc-900 dark:text-white">{item.title}</h4>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">{item.detail}</p>
+                </Card>
+              ))}
+            </div>
+          </Section>
+
+          <Section id="features" index="08" title="Features" subtitle="What a user can actually do, end to end">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {FEATURES.map((item) => (
+                <Card key={item.title} className="flex flex-col">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/15 to-fuchsia-500/15 text-indigo-500 dark:text-indigo-300">
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <h4 className="mt-3 text-sm font-semibold text-zinc-900 dark:text-white">{item.title}</h4>
+                  <ul className="mt-2 space-y-1.5">
+                    {item.items.map((i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[12.5px] leading-snug text-zinc-600 dark:text-zinc-300">
+                        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                        {i}
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              ))}
+            </div>
+          </Section>
+
+          <Section id="ui-ux" index="09" title="UI & UX" subtitle="The design system and the polish behind it">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {UX.map((item) => (
+                <Card key={item.title}>
+                  <item.icon className="h-5 w-5 text-fuchsia-500 dark:text-fuchsia-400" />
+                  <h4 className="mt-3 text-sm font-semibold text-zinc-900 dark:text-white">{item.title}</h4>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">{item.detail}</p>
+                </Card>
+              ))}
+            </div>
+            <div className="mt-4 rounded-2xl border border-zinc-200 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-fuchsia-500/5 p-5 dark:border-zinc-800">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                <Palette className="h-4 w-4 text-indigo-500" />
+                Design tokens
+              </h3>
+              <p className="mt-2 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                Tailwind v4 <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">@theme</code> tokens ·
+                indigo → purple → fuchsia gradients · zinc-950 dark surfaces · rounded-2xl cards ·
+                backdrop-blur glass · custom aurora blobs, glow/border shimmer and blur-in animations defined in{" "}
+                <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">globals.css</code>.
+              </p>
+            </div>
+          </Section>
+
+          <Section id="setup" index="10" title="Setup & Configuration" subtitle="Environment variables and everyday commands">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                  <KeyRound className="h-4 w-4 text-amber-500" />
+                  Environment variables
+                </h3>
+                <ul className="mt-4 space-y-2">
+                  {ENV.map((v) => (
+                    <li key={v.name} className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-950/40">
+                      <div>
+                        <code className="text-[12px] font-medium text-indigo-600 dark:text-indigo-300">{v.name}</code>
+                        <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{v.detail}</p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          v.required
+                            ? "bg-red-500/10 text-red-500 dark:text-red-400"
+                            : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400"
+                        }`}
+                      >
+                        {v.required ? "required" : "optional"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+              <Card>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                  <Terminal className="h-4 w-4 text-emerald-500" />
+                  Commands
+                </h3>
+                <ul className="mt-4 space-y-2">
+                  {COMMANDS.map((c) => (
+                    <li key={c.cmd} className="rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-950/40">
+                      <code className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-100">{c.cmd}</code>
+                      <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{c.detail}</p>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </div>
+          </Section>
+        </main>
+
+        <footer className="mt-20 rounded-2xl border border-zinc-200 bg-white/70 p-6 text-center backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/50">
+          <div className="mx-auto inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-1 text-[11px] font-bold text-white">
+            <Sparkles className="h-3 w-3" />
+            BUILT WITH NEXT.JS · TYPESCRIPT · TAILWIND · MONGODB · POLLINATIONS
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+            <Link href="/" className="inline-flex items-center gap-1 transition-colors hover:text-indigo-500 dark:hover:text-indigo-300">
+              <Hash className="h-3 w-3" /> Home
+            </Link>
+            <Link href="/explore" className="inline-flex items-center gap-1 transition-colors hover:text-indigo-500 dark:hover:text-indigo-300">
+              <GalleryVerticalEnd className="h-3 w-3" /> Explore
+            </Link>
+            <Link href="/history" className="inline-flex items-center gap-1 transition-colors hover:text-indigo-500 dark:hover:text-indigo-300">
+              <Image className="h-3 w-3" /> Images
+            </Link>
+            <Link href="/settings" className="inline-flex items-center gap-1 transition-colors hover:text-indigo-500 dark:hover:text-indigo-300">
+              <Palette className="h-3 w-3" /> Settings
+            </Link>
+            <Link href="/login" className="inline-flex items-center gap-1 transition-colors hover:text-indigo-500 dark:hover:text-indigo-300">
+              <Lock className="h-3 w-3" /> Login
+            </Link>
+          </div>
+          <p className="mt-4 text-[11px] text-zinc-400 dark:text-zinc-500">
+            This page is public and requires no login — share the link with anyone to explain how the project works.
+          </p>
+        </footer>
+      </div>
+    </div>
+  );
+}

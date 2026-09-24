@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
-import { buildImageUrl, PollinationsError, fetchPollinationsImage, fetchPollinationsText } from "../../../lib/pollinations";
+import { buildImageUrl, PollinationsError, fetchPollinationsImage, fetchPollinationsText, fetchPollinationsTextFromMessages } from "../../../lib/pollinations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,30 @@ function encodePrompt(prompt: string): string {
   return encodeURIComponent(prompt);
 }
 
+type HistoryMessage = { role: "user" | "assistant"; content: string };
+
+const MAX_HISTORY_MESSAGES = 30;
+const MAX_HISTORY_MESSAGE_CHARS = 2000;
+
+// Validate + cap the conversation history sent by the client so the model
+// only ever receives clean, bounded user/assistant turns.
+function sanitizeHistory(raw: unknown): HistoryMessage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: HistoryMessage[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const { role, content } = rec;
+    if (role !== "user" && role !== "assistant") continue;
+    if (typeof content !== "string") continue;
+    const trimmed = content.trim();
+    if (!trimmed) continue;
+    out.push({ role, content: trimmed.slice(0, MAX_HISTORY_MESSAGE_CHARS) });
+    if (out.length >= MAX_HISTORY_MESSAGES) break;
+  }
+  return out;
+}
+
 
 export async function POST(req: Request) {
   console.log("[API CHAT] Route called");
@@ -37,6 +62,8 @@ export async function POST(req: Request) {
   let prompt = "";
   let uploadedImageBase64: string | null = null;
   let imageMimeType = "image/png";
+  let discussionHistory: HistoryMessage[] = [];
+  let historyId = "";
 
   // Handle FormData (image upload)
   if (contentType.includes("multipart/form-data")) {
@@ -44,8 +71,16 @@ export async function POST(req: Request) {
     try {
       const formData = await req.formData();
       prompt = (formData.get("prompt") as string) || "";
+      historyId = (formData.get("historyId") as string) || "";
+      const rawHistory = formData.get("history");
+      try {
+        discussionHistory = rawHistory ? sanitizeHistory(JSON.parse(String(rawHistory))) : [];
+      } catch {
+        discussionHistory = [];
+      }
       const imageFile = formData.get("image") as File | null;
       console.log("[API CHAT] Prompt:", prompt);
+      console.log("[API CHAT] History messages:", discussionHistory.length);
       console.log("[API CHAT] Image file:", imageFile ? `${imageFile.name} (${imageFile.size} bytes, ${imageFile.type})` : "none");
 
       if (imageFile) {
@@ -64,7 +99,10 @@ export async function POST(req: Request) {
     console.log("[API CHAT] Processing JSON request");
     const body = await req.json().catch(() => null);
     prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+    historyId = typeof body?.historyId === "string" ? body.historyId.trim() : "";
+    discussionHistory = sanitizeHistory(body?.history);
     console.log("[API CHAT] Prompt from JSON:", prompt);
+    console.log("[API CHAT] History messages:", discussionHistory.length);
   }
 
   if (!prompt && !uploadedImageBase64) {
@@ -83,6 +121,26 @@ export async function POST(req: Request) {
     }
     console.log("[API CHAT] Auth success for user:", session.userId);
 
+    const db = await getDb();
+    const historyCollection = db.collection("image_history");
+    await historyCollection.createIndex({ userId: 1, createdAt: -1 });
+
+    // Resolve the conversation this turn belongs to. When no (valid) historyId
+    // is sent the turn starts a brand new conversation.
+    let conversationId: string | null = null;
+    if (historyId && ObjectId.isValid(historyId)) {
+      const existing = await historyCollection.findOne(
+        { _id: new ObjectId(historyId), userId: session.userId },
+        { projection: { conversationId: 1 } },
+      );
+      if (existing) {
+        conversationId =
+          typeof existing.conversationId === "string" && existing.conversationId
+            ? existing.conversationId
+            : historyId;
+      }
+    }
+
     const shouldGenerateImage = isImageGenerationRequest(prompt);
     const encodedPrompt = encodePrompt(prompt);
 
@@ -92,24 +150,22 @@ export async function POST(req: Request) {
     if (uploadedImageBase64 && isSimilarRequest) {
       console.log("[API CHAT] Similar/variation request detected, generating variations");
       try {
-        // First save the uploaded image to history to get an ID
-        const db = await getDb();
-        const history = db.collection("image_history");
-        await history.createIndex({ userId: 1, createdAt: -1 });
-        
         const cleanPrompt = prompt.replace(/\b(similar|variation|variations|like this|similar to this)\b/gi, "").trim() || "similar image";
         
-        const saveResult = await history.insertOne({
+        const newId = new ObjectId();
+        await historyCollection.insertOne({
+          _id: newId,
           userId: session.userId,
           prompt: cleanPrompt,
           type: "image",
           imageBase64: uploadedImageBase64,
           mimeType: imageMimeType || "image/png",
+          conversationId: conversationId || newId.toString(),
           createdAt: new Date(),
         });
         
-        const historyId = saveResult.insertedId.toString();
-        const imageUrl = `/api/history/${historyId}/image`;
+        const historyId = conversationId || newId.toString();
+        const imageUrl = `/api/history/${newId}/image`;
         
         // Now call variations API
         const variationsRes = await fetch(new URL("/api/variations", req.url).toString(), {
@@ -203,16 +259,16 @@ export async function POST(req: Request) {
         console.log("[API CHAT] Text extracted, length:", extractedText.length);
 
         // Save vision chat to history
-        const db = await getDb();
-        const history = db.collection("image_history");
-        await history.createIndex({ userId: 1, createdAt: -1 });
-        await history.insertOne({
+        const newId = new ObjectId();
+        await historyCollection.insertOne({
+          _id: newId,
           userId: session.userId,
           type: "vision",
           imageBase64: uploadedImageBase64,
           mimeType: imageMimeType,
           prompt: visionPrompt,
           response: extractedText,
+          conversationId: conversationId || newId.toString(),
           createdAt: new Date(),
         });
         console.log("[API CHAT] Vision chat saved to history");
@@ -223,6 +279,7 @@ export async function POST(req: Request) {
           text: extractedText,
           uploadedImageUrl: `data:${imageMimeType};base64,${uploadedImageBase64}`,
           prompt: visionPrompt,
+          historyId: conversationId || newId.toString(),
         }, { status: 200 });
       } catch (error: unknown) {
         console.error("[API CHAT] OCR API error:", error);
@@ -250,22 +307,23 @@ export async function POST(req: Request) {
         const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
         // Save to history
-        const db = await getDb();
-        const history = db.collection("image_history");
-        await history.createIndex({ userId: 1, createdAt: -1 });
-        await history.insertOne({
+        const newId = new ObjectId();
+        await historyCollection.insertOne({
+          _id: newId,
           userId: session.userId,
           prompt,
           type: "image",
           imageBase64: base64Data,
           mimeType,
           public: true,
+          conversationId: conversationId || newId.toString(),
           createdAt: new Date(),
         });
 
         return NextResponse.json({
           type: "image",
-          url: dataUrl
+          url: dataUrl,
+          historyId: conversationId || newId.toString(),
         }, { status: 200 });
       } catch (error) {
         console.error("Image fetch error:", error);
@@ -283,11 +341,24 @@ export async function POST(req: Request) {
 
     } else {
       // TEXT GENERATION
-      const textUrl = `https://text.pollinations.ai/${encodedPrompt}`;
-
       let responseText: string;
       try {
-        responseText = await fetchPollinationsText(textUrl);
+        if (discussionHistory.length > 0) {
+          // Send the full conversation so follow-up questions are answered
+          // using context from earlier turns instead of in isolation.
+          const messages = [
+            {
+              role: "system" as const,
+              content: "You are a helpful assistant. Use the conversation history below to understand the full context, then answer the user's latest message naturally. If the latest message refers to something mentioned earlier, respond based on that context.",
+            },
+            ...discussionHistory,
+            { role: "user" as const, content: prompt },
+          ];
+          responseText = await fetchPollinationsTextFromMessages(messages, "openai");
+        } else {
+          const textUrl = `https://text.pollinations.ai/${encodedPrompt}`;
+          responseText = await fetchPollinationsText(textUrl);
+        }
       } catch (error) {
         console.error("Text fetch error:", error);
         if (error instanceof PollinationsError) {
@@ -330,15 +401,15 @@ export async function POST(req: Request) {
       cleanMessage = cleanMessage.trim();
 
       // Save to history
-      const db = await getDb();
-      const history = db.collection("image_history");
-      await history.createIndex({ userId: 1, createdAt: -1 });
-      await history.insertOne({
+      const newId = new ObjectId();
+      await historyCollection.insertOne({
+        _id: newId,
         userId: session.userId,
         prompt,
         model: "pollinations-text",
         mimeType: "text/plain",
         generatedText: cleanMessage,
+        conversationId: conversationId || newId.toString(),
         createdAt: new Date(),
       });
 
@@ -346,6 +417,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         type: "text",
         text: cleanMessage,
+        historyId: conversationId || newId.toString(),
       }, { status: 200 });
     }
 

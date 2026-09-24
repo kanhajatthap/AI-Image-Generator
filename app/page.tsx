@@ -11,10 +11,23 @@ import { toast } from "sonner";
 import { Menu, X, Moon, Sun, BrainCircuit, LogIn, UserPlus, Search } from "lucide-react";
 
 const DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell";
+const ACTIVE_CHAT_KEY = "aig-active-chat";
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
+
+type HistoryTurn = {
+  id?: string;
+  prompt?: string;
+  type?: string;
+  mimeType?: string;
+  generatedText?: string;
+  response?: string;
+  imageUrl?: string;
+  variations?: Variation[];
+  createdAt?: string;
+};
 
 async function getErrorMessage(res: Response, fallback: string): Promise<string> {
   const json = await res.json().catch(() => null);
@@ -22,6 +35,20 @@ async function getErrorMessage(res: Response, fallback: string): Promise<string>
   const details = (json && typeof json.details === "string" && json.details) || "";
   const base = res.status >= 500 ? `${msg} (HTTP ${res.status})` : msg;
   return details ? `${base} — ${details}` : base;
+}
+
+// Flatten the visible chat into prior user/assistant turns so the AI can
+// answer follow-ups using conversation context.
+function buildHistory(msgs: ChatMessageModel[]): Array<{ role: "user" | "assistant"; content: string }> {
+  return msgs
+    .filter((m) => {
+      if (m.typing || m.isError) return false;
+      if (m.role === "assistant" && m.type === "image") return false;
+      if (m.role === "assistant" && m.variations && m.variations.length > 0) return false;
+      return typeof m.content === "string" && m.content.trim().length > 0;
+    })
+    .slice(-30)
+    .map((m) => ({ role: m.role, content: m.content.trim() }));
 }
 
 export default function Home() {
@@ -55,10 +82,12 @@ export default function Home() {
       return;
     }
     const json = await res.json();
-    const items: Array<{ id: string; prompt: string; title?: string; pinned?: boolean; createdAt: string }> =
-      Array.isArray(json?.items)
-      ? json.items
-      : [];
+    const source = Array.isArray(json?.conversations)
+      ? json.conversations
+      : Array.isArray(json?.items)
+        ? json.items
+        : [];
+    const items: Array<{ id: string; prompt: string; title?: string; pinned?: boolean; createdAt: string }> = source;
     setHistory(
       items.map((x) => ({
         id: x.id,
@@ -71,8 +100,14 @@ export default function Home() {
   };
 
   useEffect(() => {
-    loadUser();
-    loadHistoryList();
+    const restore = async () => {
+      await loadUser();
+      loadHistoryList();
+      // Reopen the chat that was active before the refresh, like ChatGPT does.
+      const stored = localStorage.getItem(ACTIVE_CHAT_KEY);
+      if (stored) openHistory(stored);
+    };
+    restore();
   }, []);
 
   // Close mobile drawer on outside click + lock body scroll
@@ -128,37 +163,62 @@ export default function Home() {
   const newChat = () => {
     setActiveHistoryId(null);
     setMessages([]);
+    localStorage.removeItem(ACTIVE_CHAT_KEY);
     setMobileMenuOpen(false);
   };
 
   const openHistory = async (id: string) => {
     setActiveHistoryId(id);
+    localStorage.setItem(ACTIVE_CHAT_KEY, id);
     setMobileMenuOpen(false);
     const res = await fetch(`/api/history/${id}`, { cache: "no-store" });
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 404) {
+        setActiveHistoryId(null);
+        setMessages([]);
+        localStorage.removeItem(ACTIVE_CHAT_KEY);
+      }
+      return;
+    }
     const json = await res.json();
-    const item = json?.item;
-    if (!item) return;
-    const createdAt = new Date(item.createdAt).toISOString();
-    const imgUrl = `/api/history/${id}/image`;
-    setMessages([
-      { id: uid(), role: "user", content: item.prompt, createdAt },
-      {
-        id: uid(),
-        role: "assistant",
-        content: item.mimeType === "text/plain" ? item.generatedText : item.prompt,
-        ...(item.mimeType !== "text/plain" && { imageUrl: imgUrl }),
-        createdAt,
-        historyId: id,
-      },
-    ]);
+    const convId = json?.conversationId || id;
+    const turns = Array.isArray(json?.items) ? (json.items as HistoryTurn[]) : [];
+    if (!turns.length) return;
+
+    const built: ChatMessageModel[] = [];
+    for (const t of turns) {
+      const createdAt: string = t.createdAt || new Date().toISOString();
+      built.push({ id: uid(), role: "user", content: t.prompt || "…", createdAt });
+      const base = { id: uid(), role: "assistant" as const, createdAt, historyId: convId };
+      if (t.type === "image") {
+        built.push({ ...base, content: t.prompt || "", type: "image", imageUrl: t.imageUrl, prompt: t.prompt });
+      } else if (t.type === "vision") {
+        built.push({ ...base, content: t.response || t.generatedText || "", type: "vision" });
+      } else if (t.type === "batch") {
+        built.push({
+          ...base,
+          content: `Generated ${t.variations?.length ?? 0} images`,
+          type: "text",
+          prompt: t.prompt,
+          variations: t.variations || [],
+        });
+      } else {
+        built.push({ ...base, content: t.generatedText || "", type: "text" });
+      }
+    }
+
+    if (convId !== id) {
+      setActiveHistoryId(convId);
+      localStorage.setItem(ACTIVE_CHAT_KEY, convId);
+    }
+    setMessages(built);
   };
 
   const deleteHistory = async (id: string) => {
     const res = await fetch("/api/history", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ conversationId: id }),
     });
     if (!res.ok) return;
     setHistory((prev) => prev.filter((x) => x.id !== id));
@@ -285,6 +345,7 @@ export default function Home() {
               width: options.width,
               height: options.height,
               model: options.model,
+              historyId: activeHistoryId || undefined,
             }),
           });
         } catch {
@@ -324,6 +385,10 @@ export default function Home() {
             } : m,
           ),
         );
+        if (json?.historyId) {
+          setActiveHistoryId(json.historyId);
+          localStorage.setItem(ACTIVE_CHAT_KEY, json.historyId);
+        }
         await loadHistoryList();
       } finally {
         setBusy(false);
@@ -355,6 +420,8 @@ try {
           if (image) {
             const formData = new FormData();
             formData.append("prompt", prompt);
+            formData.append("history", JSON.stringify(buildHistory(messages)));
+            formData.append("historyId", activeHistoryId || "");
             formData.append("image", image);
             res = await fetch("/api/chat", {
               method: "POST",
@@ -364,7 +431,7 @@ try {
             res = await fetch("/api/chat", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ prompt }),
+              body: JSON.stringify({ prompt, history: buildHistory(messages), historyId: activeHistoryId || undefined }),
             });
           }
         } catch {
@@ -414,6 +481,7 @@ try {
               type: "image",
               imageUrl: json.url,
               prompt: prompt,
+              historyId: json.historyId,
             } : m,
           ),
         );
@@ -427,6 +495,7 @@ try {
               type: "vision",
               content: json.text,
               prompt: prompt,
+              historyId: json.historyId,
             } : m,
           ),
         );
@@ -434,7 +503,7 @@ try {
         // Display text response
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === typingMsg.id ? { ...m, typing: false, type: "text", content: json.text } : m,
+            m.id === typingMsg.id ? { ...m, typing: false, type: "text", content: json.text, historyId: json.historyId } : m,
           ),
         );
       } else if (json.type === "variations") {
@@ -453,6 +522,12 @@ try {
           ),
         );
       }
+
+      if (json?.historyId) {
+        setActiveHistoryId(json.historyId);
+        localStorage.setItem(ACTIVE_CHAT_KEY, json.historyId);
+      }
+      await loadHistoryList();
     } finally {
       setBusy(false);
     }
@@ -535,10 +610,10 @@ const useSuggestion = (prompt: string) => {
               </div>
               <div>
                 <span className="font-heading text-base font-semibold text-zinc-800 dark:text-zinc-100">
-                  AI Image Generator
+                  AI Studio
                 </span>
                 <span className="hidden text-xs text-zinc-500 dark:text-zinc-400 sm:block">
-                  Create stunning images with AI
+                  Images, text &amp; vision — all in one place
                 </span>
               </div>
             </div>

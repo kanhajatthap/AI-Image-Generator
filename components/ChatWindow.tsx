@@ -91,7 +91,7 @@ export function ChatWindow({ messages, onSuggestion, onRetry }: ChatWindowProps)
                 </span>
               </h2>
               <p className="mx-auto mt-3 max-w-md text-sm text-zinc-500 dark:text-zinc-400 sm:text-base">
-                Describe your idea and let AI turn your words into stunning images. Try one of these ideas:
+                Describe an idea to generate images, ask questions, or upload a photo to analyze. Try one of these:
               </p>
 
               <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2">

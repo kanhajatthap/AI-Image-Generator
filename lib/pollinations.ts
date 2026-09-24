@@ -118,6 +118,11 @@ export async function fetchPollinationsImage(url: string): Promise<PollinationsI
   throw new PollinationsError(friendly.error, friendly.httpStatus, friendly.details);
 }
 
+export interface PollinationsChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
 export async function fetchPollinationsText(url: string): Promise<string> {
   let lastFailure: { status: number; message: string } | null = null;
 
@@ -129,6 +134,46 @@ export async function fetchPollinationsText(url: string): Promise<string> {
 
     try {
       const res = await fetch(url, { signal: controller.signal });
+      if (res.ok) return await res.text();
+      lastFailure = {
+        status: res.status,
+        message: `${res.status} ${res.statusText || ""}`.trim(),
+      };
+    } catch (e) {
+      lastFailure = {
+        status: 0,
+        message: e instanceof Error && e.name === "AbortError" ? "timed out after 30s" : e instanceof Error ? e.message : String(e),
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  const friendly = describeFailure(lastFailure?.status ?? 0, lastFailure?.message ?? "network error", "text");
+  throw new PollinationsError(friendly.error, friendly.httpStatus, friendly.details);
+}
+
+// Multi-turn chat: sends the full message history so the model can answer
+// follow-ups based on earlier turns. Returns plain generated text.
+export async function fetchPollinationsTextFromMessages(
+  messages: PollinationsChatMessage[],
+  model = "openai",
+): Promise<string> {
+  let lastFailure: { status: number; message: string } | null = null;
+
+  for (const attempt of [0, 1]) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 800));
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const res = await fetch(`${POLLINATIONS_TEXT_BASE}/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages }),
+        signal: controller.signal,
+      });
       if (res.ok) return await res.text();
       lastFailure = {
         status: res.status,

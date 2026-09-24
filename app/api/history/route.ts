@@ -33,25 +33,19 @@ export async function GET() {
     createdAt?: Date;
     updatedAt?: Date;
     imageBase64?: string;
+    conversationId?: string;
+    type?: string;
+    generatedText?: string;
   };
 
   const rows = (await db
     .collection("image_history")
     .find(
       { userId },
-      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1, imageBase64: 1, type: 1, generatedText: 1 } },
+      { projection: { prompt: 1, title: 1, pinned: 1, model: 1, mimeType: 1, createdAt: 1, updatedAt: 1, imageBase64: 1, type: 1, generatedText: 1, conversationId: 1 } },
     )
     .sort({ createdAt: -1 })
     .toArray()) as HistoryRow[];
-
-  rows.sort((a, b) => {
-    const ap = a?.pinned ? 1 : 0;
-    const bp = b?.pinned ? 1 : 0;
-    if (ap !== bp) return bp - ap;
-    const ad = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
-    const bd = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
-    return bd - ad;
-  });
 
   const items = rows.map((row) => ({
     id: String(row._id),
@@ -64,7 +58,75 @@ export async function GET() {
     createdAt: row.createdAt,
   }));
 
-  return NextResponse.json({ items }, { status: 200 });
+  // Group the raw documents into conversations. Every history doc stores a
+  // `conversationId` that points to the first message of its chat; legacy docs
+  // (no field) are their own conversation with the id being their own _id.
+  type ConversationAcc = {
+    title?: string;
+    pinned?: boolean;
+    model?: string;
+    mimeType?: string;
+    type?: string;
+    prompt?: string;
+    createdAt: Date;
+    updatedAt: Date;
+    messageCount: number;
+  };
+  const convMap = new Map<string, ConversationAcc>();
+
+  for (const row of rows) {
+    const key = String(row.conversationId || row._id);
+    const created = row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt || 0);
+    const hasUpdated = row.updatedAt instanceof Date ? row.updatedAt : created;
+
+    const prev = convMap.get(key);
+    if (!prev) {
+      convMap.set(key, {
+        title: row.title,
+        pinned: !!row.pinned,
+        model: row.model,
+        mimeType: row.mimeType,
+        type: row.type,
+        prompt: row.prompt,
+        createdAt: created,
+        updatedAt: hasUpdated,
+        messageCount: 1,
+      });
+      continue;
+    }
+
+    prev.createdAt = created.getTime() < prev.createdAt.getTime() ? created : prev.createdAt;
+    prev.messageCount += 1;
+    if (created.getTime() >= prev.updatedAt.getTime()) {
+      prev.updatedAt = created;
+      prev.prompt = row.prompt;
+      prev.model = row.model;
+      prev.mimeType = row.mimeType;
+      prev.type = row.type;
+    }
+  }
+
+  const conversations = Array.from(convMap.entries()).map(([cid, c]) => ({
+    id: cid,
+    prompt: c.prompt || "Untitled",
+    ...(c.title ? { title: c.title } : {}),
+    pinned: !!c.pinned,
+    model: c.model,
+    mimeType: c.mimeType || "image/png",
+    type: c.type,
+    messageCount: c.messageCount,
+    createdAt: c.createdAt.toISOString(),
+    updatedAt: c.updatedAt.toISOString(),
+  }));
+
+  conversations.sort((a, b) => {
+    const ap = a.pinned ? 1 : 0;
+    const bp = b.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+
+  return NextResponse.json({ items, conversations }, { status: 200 });
 }
 
 export async function POST(req: Request) {
@@ -103,13 +165,35 @@ export async function DELETE(req: Request) {
   }
 
   const body = await req.json().catch(() => null);
+  const conversationId = typeof body?.conversationId === "string" ? body.conversationId : "";
   const id = typeof body?.id === "string" ? body.id : "";
+
+  const db = await getDb();
+  const collection = db.collection("image_history");
+
+  // Deleting a conversation removes its first message and every follow-up turn.
+  if (conversationId) {
+    if (!conversationId || !ObjectId.isValid(conversationId)) {
+      return NextResponse.json({ error: "Invalid conversation id." }, { status: 400 });
+    }
+
+    const result = await collection.deleteMany({
+      userId,
+      $or: [{ _id: new ObjectId(conversationId) }, { conversationId }],
+    });
+
+    if (!result.deletedCount) {
+      return NextResponse.json({ error: "History item not found." }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true }, { status: 200 });
+  }
+
   if (!id || !ObjectId.isValid(id)) {
     return NextResponse.json({ error: "Invalid history id." }, { status: 400 });
   }
 
-  const db = await getDb();
-  const result = await db.collection("image_history").deleteOne({
+  const result = await collection.deleteOne({
     _id: new ObjectId(id),
     userId,
   });

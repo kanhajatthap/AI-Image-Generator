@@ -6,7 +6,8 @@ import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
 import { checkRateLimit } from "../../../lib/rateLimit";
 import { getCachedImage, setCachedImage } from "../../../lib/cache";
 import { addWatermark } from "../../../lib/watermark";
-import { buildImageUrl, PollinationsError, fetchPollinationsImage, fetchPollinationsText, POLLINATIONS_TEXT_BASE } from "../../../lib/pollinations";
+import { buildImageUrl, PollinationsError, fetchPollinationsText, POLLINATIONS_TEXT_BASE } from "../../../lib/pollinations";
+import { generateImageWithFallback, getConfiguredProviders, ProviderError } from "../../../lib/providers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,7 +42,8 @@ interface ImageSettings {
 export async function GET() {
   return NextResponse.json({
     status: "ok",
-    message: "The Generate API is active and functioning! Send a POST request with { prompt } to generate text or images using Pollinations AI."
+    message: "The Generate API is active and functioning! Send a POST request with { prompt } to generate text or images using Pollinations AI.",
+    providers: getConfiguredProviders(),
   });
 }
 
@@ -94,32 +96,42 @@ export async function POST(req: Request) {
       let imageBuffer: Buffer;
       let contentType: string;
       let imageUrl: string;
+      let usedProvider: string;
 
       if (cached) {
         imageBuffer = Buffer.from(cached.data, "base64") as Buffer;
         contentType = cached.mimeType;
-        imageUrl = buildImageUrl(encodedPrompt, {
-          width: settings.width,
-          height: settings.height,
-          seed: settings.seed,
-          model: settings.model,
-        });
+        usedProvider = cached.provider;
+        imageUrl =
+          cached.provider === "pollinations"
+            ? buildImageUrl(encodedPrompt, {
+                width: settings.width,
+                height: settings.height,
+                seed: settings.seed,
+                model: settings.model,
+              })
+            : `data:${cached.mimeType};base64,${cached.data}`;
       } else {
-        imageUrl = buildImageUrl(encodedPrompt, {
+        const generated = await generateImageWithFallback({
+          prompt: finalPrompt,
           width: settings.width,
           height: settings.height,
           seed: settings.seed,
           model: settings.model,
+          style: settings.style,
         });
 
-        const { buffer } = await fetchPollinationsImage(imageUrl);
-        const rawBuffer = buffer;
-
-        const watermarkedBuffer = await addWatermark(rawBuffer);
+        const watermarkedBuffer = await addWatermark(generated.buffer);
 
         imageBuffer = watermarkedBuffer;
         contentType = "image/png";
-        setCachedImage(finalPrompt, watermarkedBuffer.toString("base64"), contentType, settings.width, settings.height, settings.seed, settings.model, settings.style);
+        usedProvider = generated.provider;
+        imageUrl =
+          generated.provider === "pollinations" && generated.url
+            ? generated.url
+            : `data:${generated.mimeType};base64,${watermarkedBuffer.toString("base64")}`;
+
+        setCachedImage(finalPrompt, watermarkedBuffer.toString("base64"), contentType, settings.width, settings.height, settings.seed, settings.model, settings.style, usedProvider);
       }
 
       const db = await getDb();
@@ -153,7 +165,7 @@ export async function POST(req: Request) {
         const result = await history.insertOne({
           userId: session.userId,
           prompt,
-          model: "pollinations-image",
+          model: `${usedProvider}-image`,
           mimeType: contentType,
           imageBase64: imageBuffer.toString("base64"),
           seed: settings.seed,
@@ -174,6 +186,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         type: "image",
         url: imageUrl,
+        provider: usedProvider,
         historyId: resultHistoryId,
         settings: {
           width: settings.width,
@@ -235,8 +248,8 @@ export async function POST(req: Request) {
     }
 
   } catch (e) {
-    console.error("Pollinations API error:", e);
-    if (e instanceof PollinationsError) {
+    console.error("Generate API error:", e);
+    if (e instanceof PollinationsError || e instanceof ProviderError) {
       return NextResponse.json(
         { error: e.message, details: e.details || "" },
         { status: e.status },

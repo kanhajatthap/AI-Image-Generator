@@ -21,8 +21,8 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "AI Image Generator | Portfolio Project",
-  description: "Generate AI images with Next.js and Hugging Face inference models.",
+  title: "AI Studio | Portfolio Project",
+  description: "Generate images, chat with AI, and analyze photos with Next.js.",
 };
 
 export default function RootLayout({

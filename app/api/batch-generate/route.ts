@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
-import { buildImageUrl, PollinationsError, fetchPollinationsImage } from "../../../lib/pollinations";
+import { PollinationsError } from "../../../lib/pollinations";
+import { generateImageWithFallback, ProviderError } from "../../../lib/providers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +18,7 @@ export async function POST(req: Request) {
   const height = typeof body?.height === "number" ? body.height : 1024;
   const model = typeof body?.model === "string" ? body.model : "flux";
   const style = typeof body?.style === "string" ? body.style : undefined;
+  const historyId = typeof body?.historyId === "string" ? body.historyId.trim() : "";
 
   if (!prompt) {
     return NextResponse.json({ error: "Missing prompt." }, { status: 400 });
@@ -31,12 +34,17 @@ export async function POST(req: Request) {
     }
 
     const stylePrompt = style && style !== "none" ? `${prompt}, ${style} style, highly detailed` : prompt;
-    const encodedPrompt = encodeURIComponent(stylePrompt);
 
     const generateOne = async (seed: number) => {
-      const url = buildImageUrl(encodedPrompt, { width, height, seed, model });
-      const { buffer, mimeType } = await fetchPollinationsImage(url);
-      return { buffer, mimeType, seed, url };
+      const { buffer, mimeType } = await generateImageWithFallback({
+        prompt: stylePrompt,
+        width,
+        height,
+        seed,
+        model,
+        style,
+      });
+      return { buffer, mimeType, seed };
     };
 
     const seeds = Array.from({ length: count }, () => Math.floor(Math.random() * 10000000));
@@ -45,8 +53,25 @@ export async function POST(req: Request) {
     const db = await getDb();
     const history = db.collection("image_history");
 
+    // Resolve the conversation id so follow-up batches stay in the same chat.
+    let conversationId: string | null = null;
+    if (historyId && ObjectId.isValid(historyId)) {
+      const existing = await history.findOne(
+        { _id: new ObjectId(historyId), userId: session.userId },
+        { projection: { conversationId: 1 } },
+      );
+      if (existing) {
+        conversationId =
+          typeof existing.conversationId === "string" && existing.conversationId
+            ? existing.conversationId
+            : historyId;
+      }
+    }
+
     const imageBase64 = results[0].buffer.toString("base64");
-    const result = await history.insertOne({
+    const newId = new ObjectId();
+    await history.insertOne({
+      _id: newId,
       userId: session.userId,
       prompt,
       model: `batch-${model}`,
@@ -58,6 +83,7 @@ export async function POST(req: Request) {
       style,
       public: true,
       type: "batch",
+      conversationId: conversationId || newId.toString(),
       batchResults: results.map((r) => ({
         seed: r.seed,
         imageBase64: r.buffer.toString("base64"),
@@ -73,16 +99,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       type: "batch",
-      historyId: result.insertedId.toString(),
+      historyId: conversationId || newId.toString(),
       images: results.map((r, i) => ({
-        id: `${result.insertedId}-${i}`,
-        url: `/api/history/${result.insertedId}/image`,
+        id: `${newId}-${i}`,
+        url: `/api/history/${newId}/image${i > 0 ? `?n=${i}` : ""}`,
         seed: r.seed,
       })),
     }, { status: 200 });
   } catch (e) {
     console.error("Batch generation error:", e);
-    if (e instanceof PollinationsError) {
+    if (e instanceof PollinationsError || e instanceof ProviderError) {
       return NextResponse.json(
         { error: e.message, details: e.details || "" },
         { status: e.status },

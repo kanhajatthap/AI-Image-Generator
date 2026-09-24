@@ -54,7 +54,7 @@ export default function LoginPage() {
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-sm">
             <BrainCircuit className="h-6 w-6 text-white" />
           </div>
-          <span className="font-heading text-lg font-semibold tracking-tight">AI Image Generator</span>
+          <span className="font-heading text-lg font-semibold tracking-tight">AI Studio</span>
         </Link>
 
         <div className="relative">
@@ -64,7 +64,8 @@ export default function LoginPage() {
             from a single idea.
           </h1>
           <p className="mt-4 max-w-md text-sm leading-relaxed text-white/80">
-            Describe anything and watch AI turn your words into beautiful, shareable artwork in seconds.
+            Describe anything and watch AI turn your words into beautiful, shareable artwork in seconds — or just
+            chat with AI, upload photos to extract text, and explore ideas in one place.
           </p>
           <ul className="mt-8 space-y-3">
             {[

@@ -855,6 +855,28 @@ const useSuggestion = (prompt: string) => {
             </div>
           </header>
 
+          {quota && isLoggedIn && (
+            <div
+              className="flex items-center justify-center gap-4 border-b border-zinc-200/60 bg-zinc-50/70 px-3 py-1.5 text-xs font-medium text-zinc-600 sm:hidden dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
+              title={`Daily credits reset: ${quota.resetLabel} (IST)`}
+            >
+              <span
+                className={`flex items-center gap-1 ${quota.image.remaining === 0 ? "text-red-500" : ""}`}
+                title="Image credits remaining today"
+              >
+                <Images className="h-3 w-3" />
+                {quota.image.remaining}/{quota.image.limit} images
+              </span>
+              <span
+                className={`flex items-center gap-1 ${quota.text.remaining === 0 ? "text-red-500" : ""}`}
+                title="Chat credits remaining today"
+              >
+                <MessageSquare className="h-3 w-3" />
+                {quota.text.remaining}/{quota.text.limit} chats
+              </span>
+            </div>
+          )}
+
           <ChatWindow messages={messages} onSuggestion={useSuggestion} onRetry={handleRetry} />
 
           {quota && isLoggedIn && (quota.image.remaining === 0 || quota.text.remaining === 0) && (

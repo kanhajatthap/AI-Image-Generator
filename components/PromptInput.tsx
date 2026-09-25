@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { ImageSettings, ImageSettingsState } from "./ImageSettings";
 import { StylePresets } from "./StylePresets";
 import { PromptTemplates } from "./PromptTemplates";
-import { Settings2, Sparkles, Plus, SendHorizonal, ImageUp, History, Trash2, ScanText } from "lucide-react";
+import { Settings2, Sparkles, Plus, SendHorizonal, ImageUp, History, Trash2, ScanText, SlidersHorizontal } from "lucide-react";
 
 export interface PromptInputOptions {
   prompt: string;
@@ -75,6 +75,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [batchMode, setBatchMode] = useState(false);
   const [batchCount, setBatchCount] = useState(4);
+  const [mobileOptionsOpen, setMobileOptionsOpen] = useState(false);
   const [textModel, setTextModel] = useState<"auto" | "gemini" | "pollinations">(() => {
     if (typeof window === "undefined") return "auto";
     const stored = localStorage.getItem("defaultChatModel");
@@ -353,14 +354,34 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
 
   return (
     <div className="border-t border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
-      {/* Template and Style Bar */}
-      <div className="flex flex-wrap items-center gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
-        <PromptTemplates onSelect={(prompt) => handleTemplateSelect(prompt, "")} value={templateValue} />
-        <StylePresets onApply={(suffix) => handleStyleApply(suffix, "")} value={styleValue} />
+      {/* Mobile options toggle */}
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 sm:hidden dark:border-zinc-800">
+        <button
+          type="button"
+          onClick={() => setMobileOptionsOpen((v) => !v)}
+          aria-expanded={mobileOptionsOpen}
+          className={[
+            "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
+            mobileOptionsOpen
+              ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+              : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900",
+          ].join(" ")}
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          Options
+        </button>
       </div>
 
-      {/* Settings Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+      {/* Options panel: hidden on mobile by default, slides open on toggle; always visible on sm+ */}
+      <div className={[mobileOptionsOpen ? "block animate-reveal-up" : "hidden", "sm:block"].join(" ")}>
+        {/* Template and Style Bar */}
+        <div className="flex flex-wrap items-center gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+          <PromptTemplates onSelect={(prompt) => handleTemplateSelect(prompt, "")} value={templateValue} />
+          <StylePresets onApply={(suffix) => handleStyleApply(suffix, "")} value={styleValue} />
+        </div>
+
+        {/* Settings Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -445,6 +466,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
               {isEnhancing ? "Enhancing..." : "Enhance"}
             </button>
           )}
+        </div>
         </div>
       </div>
 
@@ -549,7 +571,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
 
           <div
             className={[
-              "relative flex items-end rounded-2xl border shadow-sm transition-all duration-200",
+              "relative flex items-center rounded-2xl border shadow-sm transition-all duration-200",
               isDragging
                 ? "border-indigo-500 ring-2 ring-indigo-500/25"
                 : "border-zinc-300 bg-white hover:border-zinc-400 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-500/15 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600 dark:focus-within:border-indigo-500 dark:focus-within:ring-indigo-500/20",
@@ -566,7 +588,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
             />
             <label
               htmlFor="image-upload"
-              className="ml-3 mb-2 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-zinc-100 text-zinc-500 transition-all duration-200 hover:bg-zinc-200 hover:text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+              className="ml-3 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-zinc-100 text-zinc-500 transition-all duration-200 hover:bg-zinc-200 hover:text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
               title="Add image"
             >
               <Plus className="h-[18px] w-[18px]" />
@@ -590,7 +612,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
               type="button"
               onClick={send}
               disabled={disabled || (!value.trim() && !selectedImage)}
-              className="mb-2 mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/25 transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-indigo-500/40 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-md disabled:hover:shadow-indigo-500/25"
+              className="mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/25 transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-indigo-500/40 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-md disabled:hover:shadow-indigo-500/25"
               title="Send message"
             >
               <SendHorizonal className="h-4 w-4" />

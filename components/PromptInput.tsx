@@ -15,6 +15,7 @@ export interface PromptInputOptions {
   model: string;
   image?: File;
   batchCount?: number;
+  textModel?: "auto" | "gemini" | "pollinations";
 }
 
 export interface PromptInputHandle {
@@ -74,6 +75,11 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [batchMode, setBatchMode] = useState(false);
   const [batchCount, setBatchCount] = useState(4);
+  const [textModel, setTextModel] = useState<"auto" | "gemini" | "pollinations">(() => {
+    if (typeof window === "undefined") return "auto";
+    const stored = localStorage.getItem("defaultChatModel");
+    return stored === "gemini" || stored === "pollinations" ? stored : "auto";
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -279,6 +285,7 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
       model: settings.model,
       image: selectedImage || undefined,
       batchCount: batchMode ? batchCount : undefined,
+      textModel,
     });
     setSelectedImage(null);
   };
@@ -290,6 +297,9 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
     try {
       const enhanced = await onEnhance(prompt);
       setValue(enhanced);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Failed to enhance the prompt.";
+      toast.error(msg);
     } finally {
       setIsEnhancing(false);
     }
@@ -400,6 +410,26 @@ export function PromptInput({ onSend, onEnhance, onOCRResult, disabled, ref }: P
                 ))}
               </select>
             )}
+          </div>
+
+          {/* Chat reply model */}
+          <div className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 dark:border-zinc-700">
+            <span className="text-sm text-zinc-600 dark:text-zinc-400">Reply:</span>
+            <select
+              value={textModel}
+              onChange={(e) => {
+                const next = e.target.value as "auto" | "gemini" | "pollinations";
+                setTextModel(next);
+                localStorage.setItem("defaultChatModel", next);
+              }}
+              aria-label="Chat reply model"
+              title="Which AI answers your text messages"
+              className="rounded-md border border-zinc-300 bg-white px-1.5 py-0.5 text-xs outline-none focus:border-indigo-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+            >
+              <option value="auto">Auto</option>
+              <option value="gemini">Gemini</option>
+              <option value="pollinations">Pollinations</option>
+            </select>
           </div>
         </div>
 

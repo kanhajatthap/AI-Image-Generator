@@ -50,6 +50,7 @@ const NAV = [
   "Data Model",
   "API Endpoints",
   "Security",
+  "Algorithms & Data Structures",
   "Features",
   "UI & UX",
   "Setup",
@@ -61,7 +62,7 @@ const STATS = [
   { icon: Server, label: "API Routes", value: "14" },
   { icon: Boxes, label: "Components", value: "17" },
   { icon: Database, label: "Database", value: "MongoDB" },
-  { icon: Cpu, label: "AI Engine", value: "Pollinations" },
+  { icon: Cpu, label: "AI Engine", value: "Gemini + Poll." },
 ];
 
 const STACK = [
@@ -116,9 +117,20 @@ const STACK = [
     title: "AI & Media",
     accent: "from-sky-500 to-cyan-600",
     items: [
-      { name: "Pollinations AI", detail: "image + text generation endpoints" },
+      { name: "Gemini API", detail: "text streaming (gemini-3.1-flash-lite) + image gen" },
+      { name: "Pollinations AI", detail: "image + text fallback endpoints" },
       { name: "OCR.space", detail: "Extract text from uploaded images" },
       { name: "sharp", detail: "Image processing + SVG watermark overlay" },
+    ],
+  },
+  {
+    icon: MessageSquare,
+    title: "Chat & Content",
+    accent: "from-violet-500 to-indigo-600",
+    items: [
+      { name: "Server-Sent Events", detail: "TextEncoder stream to the client, delta by delta" },
+      { name: "react-markdown + remark-gfm", detail: "Renders assistant Markdown (headings, lists, code)" },
+      { name: "Typewriter effect", detail: "Interval reveal with blinking cursor, turbo-finish" },
     ],
   },
   {
@@ -126,9 +138,9 @@ const STACK = [
     title: "Performance",
     accent: "from-rose-500 to-red-500",
     items: [
-      { name: "In-memory image cache", detail: "30-min TTL, max 200 entries" },
-      { name: "In-memory rate limiter", detail: "10 requests / minute per user" },
-      { name: "Pollinations retry", detail: "45s timeout, 1 automatic retry" },
+      { name: "LRU image cache", detail: "Recency eviction, 30-min TTL, max 200 entries" },
+      { name: "Sliding-window rate limiter", detail: "20 requests / minute per user, LRU-evicted buckets" },
+      { name: "Provider circuit breaker", detail: "Skip dead providers, explicit 'Tried: …' errors" },
       { name: "Blur-up placeholders", detail: "Lazy image loading + shimmer" },
     ],
   },
@@ -152,8 +164,8 @@ const FLOW = [
   },
   {
     icon: Cpu,
-    title: "4 · Call Pollinations",
-    detail: "Image: build a signed URL with width/height/seed/model, fetch (45s timeout + retry). Text: POST to text.pollinations.ai and parse the reply.",
+    title: "4 · Call the provider chain",
+    detail: "Text: Gemini streams via SSE (with a Pollinations fallback that detects provider errors). Image: Pollinations → Gemini → Hugging Face → Together → Horde with a circuit breaker.",
   },
   {
     icon: Database,
@@ -163,15 +175,15 @@ const FLOW = [
   {
     icon: Sparkles,
     title: "6 · Render",
-    detail: "Response streams back — image fades in with a blur-up, text renders cleanly, both with copy/download actions.",
+    detail: "Text types out with a blinking cursor then swaps to rendered Markdown; images fade in with a blur-up, both with copy/download actions.",
   },
 ];
 
 const WORKFLOW_PIPELINE = [
   { name: "Intake", detail: "Client POST → Route Handler → session verify" },
   { name: "Intent", detail: "isImageGenerationRequest() keyword classifier" },
-  { name: "Generate", detail: "Pollinations fetch with timeout + retry" },
-  { name: "Enrich", detail: "Watermark (sharp), 30-min cache, metadata" },
+  { name: "Generate", detail: "Gemini → Pollinations chain, circuit breaker" },
+  { name: "Enrich", detail: "Watermark (sharp), LRU cache, metadata" },
   { name: "Store", detail: "image_history insert/update in MongoDB" },
   { name: "Serve", detail: "data:URL or /api/history/:id/image bytes" },
 ];
@@ -254,12 +266,33 @@ const SECURITY = [
   {
     icon: Timer,
     title: "Rate limiting",
-    detail: "In-memory limiter: 10 requests per minute per user, with retry-after seconds.",
+    detail: "Sliding-window limiter: 20 requests per minute per user with retry-after seconds; idle user buckets are evicted via LRU.",
   },
   {
     icon: FileText,
     title: "Server-side validation",
     detail: "Prompt presence, type coercion, mime checks, ObjectId validation on every mutation.",
+  },
+];
+
+const ALGORITHMS = [
+  {
+    icon: Layers,
+    title: "LRU cache",
+    detail: "lib/lruCache.ts — a generic hashmap + doubly-linked list. get / set / evict are all O(1), the linked list tracks recency and the evicted node is always the true least-recently-used entry. It backs the image cache and the rate-limiter buckets, with optional TTL.",
+    complexity: "O(1) get · O(1) set · O(1) evict",
+  },
+  {
+    icon: Timer,
+    title: "Sliding-window rate limiter",
+    detail: "lib/rateLimit.ts — each user keeps a queue of request timestamps; stale ones are dropped from the FRONT (a deque) so the window always reflects the last 60s. Checks are O(1) amortized, and per-user windows are LRU-evicted after inactivity.",
+    complexity: "O(1) amortized per check",
+  },
+  {
+    icon: Binary,
+    title: "Bloom filter",
+    detail: "lib/bloomFilter.ts — constant-memory probabilistic duplicate-prompt detection. Every prompt is set at k-bit positions using double hashing (FNV-1a + cyrb32). Membership is O(k), never false-negative, and can only ever give a harmless false positive.",
+    complexity: "O(k) membership · O(k) insert",
   },
 ];
 
@@ -272,7 +305,7 @@ const FEATURES = [
   {
     icon: MessageSquare,
     title: "AI chat (text)",
-    items: ["Auto-routed text responses", "'Thinking…' typing indicator", "Copy + download text"],
+    items: ["SSE streaming + typewriter with blinking cursor", "Rendered Markdown (headings, lists, code)", "Model picker: Auto · Gemini · Pollinations"],
   },
   {
     icon: ScanText,
@@ -319,6 +352,8 @@ const ENV = [
   { name: "MONGODB_URI", required: true, detail: "MongoDB Atlas connection string" },
   { name: "MONGODB_DB", required: false, detail: "Database name (default: ai_image_generator)" },
   { name: "SESSION_SECRET", required: true, detail: "Secret used to sign JWTs" },
+  { name: "GEMINI_API_KEY", required: true, detail: "Key for Gemini text streaming + image generation" },
+  { name: "GEMINI_TEXT_MODEL", required: false, detail: "Text model id (default: gemini-3.1-flash-lite)" },
   { name: "OCR_SPACE_API_KEY", required: true, detail: "Key for the vision / OCR feature" },
 ];
 
@@ -334,14 +369,14 @@ const COMPONENT_TREE = [
   { level: 0, name: "app/layout.tsx", detail: "Root layout · fonts · ThemeProvider · GlobalPalette · Toaster" },
   { level: 1, name: "app/page.tsx", detail: "Home workspace (chat stream + sidebar skeleton)" },
   { level: 2, name: "ChatWindow.tsx", detail: "Hero, suggestions, message list" },
-  { level: 2, name: "ChatMessage.tsx", detail: "User/AI bubbles, typing/stages, variations, lightbox" },
-  { level: 2, name: "PromptInput.tsx", detail: "Textarea, image upload, batch toggle, enhance" },
+  { level: 2, name: "ChatMessage.tsx", detail: "User/AI bubbles, typewriter + Markdown, variants, lightbox" },
+  { level: 2, name: "PromptInput.tsx", detail: "Textarea, image upload, batch toggle, enhance, reply-model picker" },
   { level: 2, name: "Sidebar.tsx", detail: "History list, pin/rename/delete, navigation" },
   { level: 1, name: "app/explore", detail: "Public gallery · trending · search · sort" },
   { level: 1, name: "app/history", detail: "Personal library · lightbox · regenerate actions" },
   { level: 1, name: "app/settings · login · signup", detail: "Preference, auth pages with password strength" },
   { level: 1, name: "components/ui", detail: "Lightbox · BlurImage · GenerationStages · GlobalPalette · ThemeProvider" },
-  { level: 0, name: "lib/", detail: "pollinations · session · mongodb · rateLimit · cache · watermark · utils" },
+  { level: 0, name: "lib/", detail: "text · pollinations · providers · session · mongodb · rateLimit · lruCache · bloomFilter · cache · watermark · utils" },
   { level: 0, name: "app/api/", detail: "14 route handlers across auth, chat, gallery, history" },
 ];
 
@@ -490,7 +525,7 @@ export default function AboutPage() {
                 </h3>
                 <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
                   <li>· Generate AI images from a text prompt via Pollinations</li>
-                  <li>· Ask questions and get AI text replies in the same chat</li>
+                  <li>· Ask questions and get streaming AI text answers — typewriter + rendered Markdown</li>
                   <li>· Upload an image to run OCR — the extracted text comes back as an answer</li>
                   <li>· Batch-generate 1–8 images, create variations, and download results</li>
                 </ul>
@@ -546,7 +581,8 @@ export default function AboutPage() {
             <p className="mt-4 text-xs text-zinc-400 dark:text-zinc-500">
               Note: <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">axios</code> and{" "}
               <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">@google/generative-ai</code> are installed in
-              package.json but are not used by the current code — the app talks to Pollinations and OCR.space directly.
+              package.json but are not used by the current code — Gemini is called over its REST + SSE endpoint with{" "}
+              <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">fetch</code>, and OCR is handled by OCR.space.
             </p>
           </Section>
 
@@ -621,10 +657,11 @@ export default function AboutPage() {
                   Shared libraries
                 </h3>
                 <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/text</code> — Gemini + Pollinations streaming, error detection</li>
                   <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/pollinations</code> — fetch, 45s timeout, 1 retry, friendly errors</li>
                   <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/session</code> — JWT create/verify</li>
                   <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/mongodb</code> — cached global connection</li>
-                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/rateLimit · cache · watermark</code> — infra helpers</li>
+                  <li><code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">lib/rateLimit · lruCache · bloomFilter</code> — the data-structure backbone</li>
                 </ul>
               </Card>
             </div>
@@ -719,7 +756,30 @@ export default function AboutPage() {
             </div>
           </Section>
 
-          <Section id="features" index="08" title="Features" subtitle="What a user can actually do, end to end">
+          <Section
+            id="algorithms-data-structures"
+            index="08"
+            title="Algorithms & Data Structures"
+            subtitle="Real, bounded-memory data structures behind the infra — not just Maps"
+          >
+            <div className="grid gap-4 md:grid-cols-3">
+              {ALGORITHMS.map((item) => (
+                <Card key={item.title} className="flex flex-col">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/15 to-teal-500/15 text-emerald-600 dark:text-emerald-400">
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <h4 className="mt-3 text-sm font-semibold text-zinc-900 dark:text-white">{item.title}</h4>
+                  <p className="mt-1.5 flex-1 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">{item.detail}</p>
+                  <div className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                    <Zap className="h-3 w-3" />
+                    {item.complexity}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </Section>
+
+          <Section id="features" index="09" title="Features" subtitle="What a user can actually do, end to end">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {FEATURES.map((item) => (
                 <Card key={item.title} className="flex flex-col">
@@ -740,7 +800,7 @@ export default function AboutPage() {
             </div>
           </Section>
 
-          <Section id="ui-ux" index="09" title="UI & UX" subtitle="The design system and the polish behind it">
+          <Section id="ui-ux" index="10" title="UI & UX" subtitle="The design system and the polish behind it">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {UX.map((item) => (
                 <Card key={item.title}>
@@ -764,7 +824,7 @@ export default function AboutPage() {
             </div>
           </Section>
 
-          <Section id="setup" index="10" title="Setup & Configuration" subtitle="Environment variables and everyday commands">
+          <Section id="setup" index="11" title="Setup & Configuration" subtitle="Environment variables and everyday commands">
             <div className="grid gap-4 lg:grid-cols-2">
               <Card>
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
@@ -811,8 +871,8 @@ export default function AboutPage() {
 
         <footer className="mt-20 rounded-2xl border border-zinc-200 bg-white/70 p-6 text-center backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/50">
           <div className="mx-auto inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-1 text-[11px] font-bold text-white">
-            <Sparkles className="h-3 w-3" />
-            BUILT WITH NEXT.JS · TYPESCRIPT · TAILWIND · MONGODB · POLLINATIONS
+<Sparkles className="h-3 w-3" />
+              BUILT WITH NEXT.JS · TYPESCRIPT · TAILWIND · MONGODB · GEMINI · POLLINATIONS
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
             <Link href="/" className="inline-flex items-center gap-1 transition-colors hover:text-indigo-500 dark:hover:text-indigo-300">

@@ -3,7 +3,16 @@ import { cookies } from "next/headers";
 import { ObjectId } from "mongodb";
 import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
-import { buildImageUrl, PollinationsError, fetchPollinationsImage, fetchPollinationsText, fetchPollinationsTextFromMessages } from "../../../lib/pollinations";
+import { PollinationsError } from "../../../lib/pollinations";
+import { generateImageWithFallback, ProviderError } from "../../../lib/providers";
+import { checkRateLimit } from "../../../lib/rateLimit";
+import { markPromptSeen } from "../../../lib/bloomFilter";
+import {
+  generateTextWithFallback,
+  generateTextStream,
+  TextProviderError,
+  GeneratedText,
+} from "../../../lib/text";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,11 +29,6 @@ function isImageGenerationRequest(prompt: string): boolean {
   const lower = prompt.toLowerCase();
 
   return imageKeywords.some(word => lower.includes(word));
-}
-
-// Helper to encode prompt for URL
-function encodePrompt(prompt: string): string {
-  return encodeURIComponent(prompt);
 }
 
 type HistoryMessage = { role: "user" | "assistant"; content: string };
@@ -64,6 +68,9 @@ export async function POST(req: Request) {
   let imageMimeType = "image/png";
   let discussionHistory: HistoryMessage[] = [];
   let historyId = "";
+  let streamRequested = false;
+  let forceText = false;
+  let textModel: "auto" | "gemini" | "pollinations" = "auto";
 
   // Handle FormData (image upload)
   if (contentType.includes("multipart/form-data")) {
@@ -101,8 +108,13 @@ export async function POST(req: Request) {
     prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
     historyId = typeof body?.historyId === "string" ? body.historyId.trim() : "";
     discussionHistory = sanitizeHistory(body?.history);
+    streamRequested = body?.stream === true;
+    forceText = body?.forceText === true;
+    const rawTextModel = body?.textModel;
+    textModel = rawTextModel === "gemini" || rawTextModel === "pollinations" ? rawTextModel : "auto";
     console.log("[API CHAT] Prompt from JSON:", prompt);
     console.log("[API CHAT] History messages:", discussionHistory.length);
+    console.log("[API CHAT] stream:", streamRequested, "textModel:", textModel, "forceText:", forceText);
   }
 
   if (!prompt && !uploadedImageBase64) {
@@ -120,6 +132,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Please login to generate." }, { status: 401 });
     }
     console.log("[API CHAT] Auth success for user:", session.userId);
+
+    // Sliding-window rate limit (see lib/rateLimit.ts)
+    const rateLimit = checkRateLimit(session.userId);
+    if (!rateLimit.allowed) {
+      console.log("[API CHAT] Rate limited:", session.userId);
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Please wait before trying again.", retryAfter: rateLimit.retryAfter },
+        { status: 429 }
+      );
+    }
 
     const db = await getDb();
     const historyCollection = db.collection("image_history");
@@ -141,8 +163,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const shouldGenerateImage = isImageGenerationRequest(prompt);
-    const encodedPrompt = encodePrompt(prompt);
+    const shouldGenerateImage = forceText ? false : isImageGenerationRequest(prompt);
 
     // Check if prompt is asking for similar images - redirect to variations API
     const isSimilarRequest = /\b(similar|variation|variations|like this|similar to this)\b/i.test(prompt);
@@ -299,10 +320,14 @@ export async function POST(req: Request) {
 
     // IMAGE GENERATION
     if (shouldGenerateImage) {
-      const imageUrl = buildImageUrl(encodeURIComponent(prompt), { width: 1024, height: 1024, seed: Date.now() });
-
       try {
-        const { buffer, mimeType } = await fetchPollinationsImage(imageUrl);
+        const { buffer, mimeType, provider } = await generateImageWithFallback({
+          prompt,
+          width: 1024,
+          height: 1024,
+          seed: Math.floor(Math.random() * 10000000),
+          model: "flux",
+        });
         const base64Data = buffer.toString("base64");
         const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
@@ -312,6 +337,7 @@ export async function POST(req: Request) {
           _id: newId,
           userId: session.userId,
           prompt,
+          model: `${provider}-image`,
           type: "image",
           imageBase64: base64Data,
           mimeType,
@@ -326,42 +352,88 @@ export async function POST(req: Request) {
           historyId: conversationId || newId.toString(),
         }, { status: 200 });
       } catch (error) {
-        console.error("Image fetch error:", error);
-        if (error instanceof PollinationsError) {
+        console.error("Image generation error:", error);
+        if (error instanceof PollinationsError || error instanceof ProviderError) {
           return NextResponse.json(
             { error: error.message, details: error.details || "" },
             { status: error.status },
           );
         }
         return NextResponse.json(
-          { error: "Failed to fetch image. Please try again in a moment.", details: error instanceof Error ? error.message : String(error) },
+          { error: "Failed to generate image. Please try again in a moment.", details: error instanceof Error ? error.message : String(error) },
           { status: 502 },
         );
       }
 
     } else {
       // TEXT GENERATION
-      let responseText: string;
+      // Bloom-filter duplicate detection (approximate, only surfaces a hint).
+      const duplicatePrompt = !forceText && markPromptSeen(session.userId, prompt);
+      if (streamRequested) {
+        const encoder = new TextEncoder();
+        const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            let historyIdOut = conversationId || "";
+            let provider = "";
+            let model = "";
+            try {
+              for await (const ev of generateTextStream(prompt, discussionHistory, textModel)) {
+                if (ev.kind === "delta") {
+                  controller.enqueue(encoder.encode(sse("delta", { text: ev.text })));
+                } else if (ev.kind === "done") {
+                  provider = ev.provider;
+                  model = ev.model;
+                  if (!forceText) {
+                    const newId = new ObjectId();
+                    await historyCollection.insertOne({
+                      _id: newId,
+                      userId: session.userId,
+                      prompt,
+                      model: `${provider}-text`,
+                      mimeType: "text/plain",
+                      generatedText: ev.text,
+                      conversationId: conversationId || newId.toString(),
+                      createdAt: new Date(),
+                    });
+                    historyIdOut = conversationId || newId.toString();
+                  }
+                }
+              }
+              controller.enqueue(encoder.encode(sse("done", { historyId: historyIdOut, provider, model, duplicate: duplicatePrompt })));
+            } catch (error) {
+              console.error("Text streaming error:", error);
+              const mapped =
+                error instanceof PollinationsError || error instanceof TextProviderError
+                  ? { error: error.message, details: error.details || "", status: error.status }
+                  : {
+                      error: "Failed to generate the response. Please try again.",
+                      details: error instanceof Error ? error.message : String(error),
+                      status: 502,
+                    };
+              controller.enqueue(encoder.encode(sse("error", mapped)));
+            } finally {
+              controller.close();
+            }
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+          },
+        });
+      }
+
+      let generatedText: GeneratedText;
       try {
-        if (discussionHistory.length > 0) {
-          // Send the full conversation so follow-up questions are answered
-          // using context from earlier turns instead of in isolation.
-          const messages = [
-            {
-              role: "system" as const,
-              content: "You are a helpful assistant. Use the conversation history below to understand the full context, then answer the user's latest message naturally. If the latest message refers to something mentioned earlier, respond based on that context.",
-            },
-            ...discussionHistory,
-            { role: "user" as const, content: prompt },
-          ];
-          responseText = await fetchPollinationsTextFromMessages(messages, "openai");
-        } else {
-          const textUrl = `https://text.pollinations.ai/${encodedPrompt}`;
-          responseText = await fetchPollinationsText(textUrl);
-        }
+        generatedText = await generateTextWithFallback(prompt, discussionHistory, textModel);
       } catch (error) {
-        console.error("Text fetch error:", error);
-        if (error instanceof PollinationsError) {
+        console.error("Text generation error:", error);
+        if (error instanceof PollinationsError || error instanceof TextProviderError) {
           return NextResponse.json(
             { error: error.message, details: error.details || "" },
             { status: error.status },
@@ -373,51 +445,31 @@ export async function POST(req: Request) {
         );
       }
 
-      // Parse response - handle both plain text and JSON formats
-      let cleanMessage = responseText;
-      try {
-        const parsed = JSON.parse(responseText);
-        // Extract message from various possible response formats
-        if (typeof parsed === "string") {
-          cleanMessage = parsed;
-        } else if (parsed.message && typeof parsed.message === "string") {
-          cleanMessage = parsed.message;
-        } else if (parsed.content && typeof parsed.content === "string") {
-          cleanMessage = parsed.content;
-        } else if (parsed.text && typeof parsed.text === "string") {
-          cleanMessage = parsed.text;
-        } else if (parsed.response && typeof parsed.response === "string") {
-          cleanMessage = parsed.response;
-        } else if (parsed.choices && parsed.choices[0]?.message?.content) {
-          cleanMessage = parsed.choices[0].message.content;
-        } else if (parsed.choices && parsed.choices[0]?.text) {
-          cleanMessage = parsed.choices[0].text;
-        }
-      } catch {
-        // Not JSON, use as-is (it's already plain text)
+      const cleanMessage = generatedText.text;
+
+      // Save to history (skip tool calls like prompt-enhancement)
+      const savedId = new ObjectId();
+      if (!forceText) {
+        await historyCollection.insertOne({
+          _id: savedId,
+          userId: session.userId,
+          prompt,
+          model: `${generatedText.provider}-text`,
+          mimeType: "text/plain",
+          generatedText: cleanMessage,
+          conversationId: conversationId || savedId.toString(),
+          createdAt: new Date(),
+        });
       }
-
-      // Trim and clean up
-      cleanMessage = cleanMessage.trim();
-
-      // Save to history
-      const newId = new ObjectId();
-      await historyCollection.insertOne({
-        _id: newId,
-        userId: session.userId,
-        prompt,
-        model: "pollinations-text",
-        mimeType: "text/plain",
-        generatedText: cleanMessage,
-        conversationId: conversationId || newId.toString(),
-        createdAt: new Date(),
-      });
 
       // Return JSON response with clean text
       return NextResponse.json({
         type: "text",
         text: cleanMessage,
-        historyId: conversationId || newId.toString(),
+        provider: generatedText.provider,
+        model: generatedText.model,
+        duplicate: duplicatePrompt,
+        historyId: conversationId || savedId.toString(),
       }, { status: 200 });
     }
 

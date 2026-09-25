@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { GenerationStages } from "./GenerationStages";
 import { Lightbox, type LightboxItem } from "./Lightbox";
 import {
@@ -34,6 +36,7 @@ export type ChatMessageModel = {
   imageUrl?: string;
   createdAt: string;
   typing?: boolean;
+  streaming?: boolean;
   historyId?: string;
   settings?: ImageSettings;
   prompt?: string;
@@ -53,6 +56,120 @@ export type Variation = {
   seed: number;
   prompt: string;
 };
+
+// Renders assistant text as formatted Markdown (headings, lists, code, tables,
+// links). Inline and fenced code are styled separately; inline code detects
+// multi-line content to avoid pill-styling block code inside `<pre>`.
+function MarkdownContent({ text }: { text: string }) {
+  return (
+    <div className="text-sm leading-6">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
+          h1: ({ children }) => <h1 className="mb-2 mt-3 text-lg font-semibold first:mt-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-2 mt-3 text-base font-semibold first:mt-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-1.5 mt-2.5 text-sm font-semibold first:mt-0">{children}</h3>,
+          h4: ({ children }) => <h4 className="mb-1.5 mt-2 text-sm font-semibold first:mt-0">{children}</h4>,
+          ul: ({ children }) => <ul className="my-1.5 list-disc pl-5">{children}</ul>,
+          ol: ({ children }) => <ol className="my-1.5 list-decimal pl-5">{children}</ol>,
+          li: ({ children }) => <li className="my-0.5">{children}</li>,
+          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+          em: ({ children }) => <em>{children}</em>,
+          hr: () => <hr className="my-3 border-zinc-200 dark:border-zinc-800" />,
+          blockquote: ({ children }) => (
+            <blockquote className="my-1.5 border-l-2 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+              {children}
+            </blockquote>
+          ),
+          a: ({ children, href }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline underline-offset-2 hover:text-indigo-500 dark:text-indigo-400">
+              {children}
+            </a>
+          ),
+          code: ({ children }) => {
+            const text = String(children ?? "").replace(/\n$/, "");
+            const multiline = text.includes("\n");
+            return multiline ? (
+              <code className="font-mono text-[13px] leading-6">{text}</code>
+            ) : (
+              <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[0.85em] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => (
+            <pre className="my-2 overflow-x-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+              {children}
+            </pre>
+          ),
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto">
+              <table className="w-full border-collapse text-sm">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="border border-zinc-200 bg-zinc-50 px-2 py-1 text-left font-medium dark:border-zinc-800 dark:bg-zinc-900">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border border-zinc-200 px-2 py-1 dark:border-zinc-800">{children}</td>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+// Reveals incoming streamed text character-by-character with a blinking
+// cursor (ChatGPT-style). While the server is still sending deltas it keeps
+// a live cursor; once `complete` it quickly finishes revealing then hands
+// off to MarkdownContent for the final formatted render.
+function TypewriterText({ text, complete }: { text: string; complete: boolean }) {
+  const [shown, setShown] = useState(0);
+  const textRef = useRef(text);
+
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
+
+  useEffect(() => {
+    let id: ReturnType<typeof setInterval> | null = null;
+    const tick = () => {
+      setShown((prev) => {
+        const target = textRef.current.length;
+        if (prev >= target) {
+          if (complete && id) clearInterval(id);
+          return prev;
+        }
+        return complete ? Math.min(prev + 8, target) : Math.min(prev + 2, target);
+      });
+    };
+    id = setInterval(tick, complete ? 10 : 14);
+    return () => {
+      if (id) clearInterval(id);
+    };
+  }, [complete]);
+
+  const done = complete && shown >= text.length;
+
+  if (done) {
+    return <MarkdownContent text={text} />;
+  }
+
+  return (
+    <div className="text-sm whitespace-pre-wrap leading-6">
+      {text.slice(0, shown)}
+      <span
+        className="ml-0.5 inline-block h-4 w-[3px] translate-y-0.5 animate-pulse rounded-sm bg-indigo-500/80 dark:bg-indigo-400/80"
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
 
 export function ChatMessage({ message, onRetry }: ChatMessageProps) {
   const [imageError, setImageError] = useState(false);
@@ -251,6 +368,12 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
                       )}
                     </div>
                   </div>
+                ) : !isUser && message.type === "text" ? (
+                  message.streaming ? (
+                    <TypewriterText text={message.content} complete={false} />
+                  ) : (
+                    <MarkdownContent text={message.content} />
+                  )
                 ) : (
                   <div className="text-sm whitespace-pre-wrap leading-6">{message.content}</div>
                 )}

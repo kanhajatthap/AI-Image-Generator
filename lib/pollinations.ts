@@ -82,16 +82,20 @@ function describeFailure(status: number, message: string, kind: "image" | "text"
   };
 }
 
-// Fetch from Pollinations with a timeout + one automatic retry.
+// Fetch from Pollinations with a per-call budget + one automatic retry.
 // Throws a PollinationsError with a user-friendly message on failure.
-export async function fetchPollinationsImage(url: string): Promise<PollinationsImageResult> {
+export async function fetchPollinationsImage(url: string, budgetMs = 30000): Promise<PollinationsImageResult> {
+  const deadline = Date.now() + budgetMs;
   let lastFailure: { status: number; message: string } | null = null;
 
   for (const attempt of [0, 1]) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 800));
+    if (Date.now() >= deadline) break;
+    if (attempt > 0) await new Promise((r) => setTimeout(r, Math.min(800, deadline - Date.now())));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
+    const timeout = setTimeout(() => controller.abort(), remaining);
 
     try {
       const res = await fetch(url, { signal: controller.signal });
@@ -107,7 +111,7 @@ export async function fetchPollinationsImage(url: string): Promise<PollinationsI
     } catch (e) {
       lastFailure = {
         status: 0,
-        message: e instanceof Error && e.name === "AbortError" ? "timed out after 45s" : e instanceof Error ? e.message : String(e),
+        message: e instanceof Error && e.name === "AbortError" ? "timed out" : e instanceof Error ? e.message : String(e),
       };
     } finally {
       clearTimeout(timeout);

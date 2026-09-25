@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { buildImageUrl, PollinationsError, fetchPollinationsImage } from "./pollinations";
 
 export interface GenerateImageOptions {
@@ -50,14 +51,35 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
 // ---------------------------------------------------------------------------
 
 const POLLINATIONS_FALLBACK_MODELS = ["sana"];
+const POLLINATIONS_BUDGET_MS = 30000;
+const POLLINATIONS_MAX_FAILURES = 2;
+const POLLINATIONS_RETRY_MS = 10 * 60 * 1000;
+
+// In-memory circuit breaker: while Pollinations is having an outage, skip the
+// slow 30s timeouts and fall through to the next provider. Auto-retries after
+// the cooldown (or on server restart); a single success resets the counter.
+const pollinationsHealth = { failures: 0, lastAttemptAt: 0 };
 
 async function pollinationsGenerate(opts: GenerateImageOptions): Promise<GeneratedImage> {
+  if (pollinationsHealth.failures > 0 && pollinationsHealth.failures >= POLLINATIONS_MAX_FAILURES) {
+    if (Date.now() - pollinationsHealth.lastAttemptAt < POLLINATIONS_RETRY_MS) {
+      const skipMs = POLLINATIONS_RETRY_MS - (Date.now() - pollinationsHealth.lastAttemptAt);
+      throw new ProviderError(
+        "Pollinations has been unavailable recently, skipping this attempt.",
+        "pollinations",
+        `Skipped after ${pollinationsHealth.failures} recent failures; will retry in ${Math.max(1, Math.round(skipMs / 1000))}s`,
+      );
+    }
+  }
+
   const requested = opts.model && opts.model !== "default" ? opts.model : "flux";
   const candidates = Array.from(new Set([requested, "flux", ...POLLINATIONS_FALLBACK_MODELS]));
+  const deadline = Date.now() + POLLINATIONS_BUDGET_MS;
 
   let lastError: unknown = null;
 
   for (const model of candidates) {
+    if (Date.now() >= deadline) break;
     try {
       const url = buildImageUrl(encodeURIComponent(opts.prompt), {
         width: opts.width,
@@ -65,12 +87,16 @@ async function pollinationsGenerate(opts: GenerateImageOptions): Promise<Generat
         seed: opts.seed,
         model,
       });
-      const { buffer, mimeType } = await fetchPollinationsImage(url);
+      const { buffer, mimeType } = await fetchPollinationsImage(url, Math.max(5000, deadline - Date.now()));
+      pollinationsHealth.failures = 0;
       return { buffer, mimeType, provider: "pollinations", model, url };
     } catch (e) {
       lastError = e;
     }
   }
+
+  pollinationsHealth.failures += 1;
+  pollinationsHealth.lastAttemptAt = Date.now();
 
   if (lastError instanceof PollinationsError) {
     throw new ProviderError(
@@ -91,7 +117,7 @@ async function pollinationsGenerate(opts: GenerateImageOptions): Promise<Generat
 
 const HF_IMAGE_MODELS = [
   process.env.HF_IMAGE_MODEL,
-  "black-forest-labs/FLUX.1-schnell",
+  "stabilityai/stable-diffusion-3-medium-diffusers",
   "stabilityai/stable-diffusion-xl-base-1.0",
   "runwayml/stable-diffusion-v1-5",
 ].filter((m): m is string => Boolean(m));
@@ -104,8 +130,10 @@ async function huggingFaceGenerate(opts: GenerateImageOptions): Promise<Generate
 
   for (const model of candidates) {
     try {
+      // Legacy api-inference.huggingface.co was decommissioned in late 2025;
+      // the Inference Providers router is the only supported endpoint now.
       const res = await fetchWithTimeout(
-        `https://api-inference.huggingface.co/models/${model}`,
+        `https://router.huggingface.co/hf-inference/models/${model}`,
         {
           method: "POST",
           headers: {
@@ -135,6 +163,11 @@ async function huggingFaceGenerate(opts: GenerateImageOptions): Promise<Generate
         } catch {
           // ignore JSON parse errors, keep fallback message
         }
+        // Surf the common "wrong/highly-permissioned token" problem clearly so
+        // the user knows to enable "Inference Providers" on their HF token.
+        if (res.status === 403) {
+          msg += " Enable the \"Inference Providers\" permission on your Hugging Face token (https://huggingface.co/settings/tokens).";
+        }
         throw new Error(msg);
       }
 
@@ -155,7 +188,7 @@ async function huggingFaceGenerate(opts: GenerateImageOptions): Promise<Generate
 // Provider 3: Google Gemini (native image generation, free API key required)
 // ---------------------------------------------------------------------------
 
-const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
 
 async function geminiGenerate(opts: GenerateImageOptions): Promise<GeneratedImage> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -182,7 +215,10 @@ async function geminiGenerate(opts: GenerateImageOptions): Promise<GeneratedImag
     const json = await res.json().catch(() => null);
 
     if (!res.ok) {
-      const message = typeof json?.error?.message === "string" ? json.error.message : `HTTP ${res.status}`;
+      let message = typeof json?.error?.message === "string" ? json.error.message : `HTTP ${res.status}`;
+      if (res.status === 429) {
+        message += " The free Gemini plan has no image-generation quota for new accounts, so image requests are rejected. Enable billing in Google AI Studio (https://aistudio.google.com) to use Gemini images.";
+      }
       throw new Error(message);
     }
 
@@ -282,6 +318,172 @@ async function togetherGenerate(opts: GenerateImageOptions): Promise<GeneratedIm
 }
 
 // ---------------------------------------------------------------------------
+// Provider 5: Local offline dummy (always works, no external service needed)
+// ---------------------------------------------------------------------------
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+async function localGenerate(opts: GenerateImageOptions): Promise<GeneratedImage> {
+  const width = opts.width || 1024;
+  const height = opts.height || 1024;
+  const minDim = Math.min(width, height);
+
+  const raw = (opts.prompt || "AI Studio Logo").trim();
+  const safe = escapeXml(raw);
+
+  const maxChars = Math.max(8, Math.floor(width / 26));
+  const truncated = safe.length > maxChars ? `${safe.slice(0, maxChars - 1)}…` : safe;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#9333ea"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#bg)"/>
+  <circle cx="${width / 2}" cy="${height / 2 - minDim * 0.12}" r="${minDim * 0.2}" fill="rgba(255,255,255,0.92)"/>
+  <text x="50%" y="${height / 2 - minDim * 0.12}" font-family="Arial, sans-serif" font-size="${minDim * 0.17}" font-weight="bold" fill="#6d28d9" text-anchor="middle" dominant-baseline="middle">AI</text>
+  <text x="50%" y="${height - minDim * 0.17}" font-family="Arial, sans-serif" font-size="${minDim * 0.055}" fill="white" text-anchor="middle">${truncated}</text>
+  <text x="50%" y="${height - minDim * 0.08}" font-family="Arial, sans-serif" font-size="${minDim * 0.038}" fill="rgba(255,255,255,0.75)" text-anchor="middle">Dummy logo · generated offline</text>
+</svg>`;
+
+  const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  return { buffer, mimeType: "image/png", provider: "local" };
+}
+
+// ---------------------------------------------------------------------------
+// Provider 6: AI Horde (free, community-run, no billing or signup needed).
+// Anonymous API key "0000000000" works out of the box; provide HORDE_API_KEY
+// for better queue priority (still free). Bails out fast when the queue is
+// crowded so the app never stalls waiting for a free worker.
+// ---------------------------------------------------------------------------
+
+const HORDE_API_BASE = "https://aihorde.net/api/v2";
+const HORDE_CLIENT_AGENT = "web:ai-image-generator:0.1.0";
+const HORDE_ANON_API_KEY = "0000000000";
+const HORDE_MAX_WAIT_MS = 45000;
+
+const HORDE_API_KEY = process.env.HORDE_API_KEY || HORDE_ANON_API_KEY;
+const HORDE_MODELS = (
+  process.env.HORDE_MODELS?.split(",").map((m) => m.trim()).filter(Boolean)
+) ?? ["FLUX.1-dev", "SDXL_diffusers", "v5.1"];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function hordeRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetchWithTimeout(new URL(path, HORDE_API_BASE).toString(), init, 30000);
+}
+
+async function hordeDelete(id: string): Promise<void> {
+  await hordeRequest(`/generate/status/${id}`, {
+    method: "DELETE",
+    headers: { "Client-Agent": HORDE_CLIENT_AGENT, apikey: HORDE_API_KEY },
+  }).catch(() => {});
+}
+
+async function hordeGenerate(opts: GenerateImageOptions): Promise<GeneratedImage> {
+  const width = opts.width || 1024;
+  const height = opts.height || 1024;
+  const seed = opts.seed ?? Math.floor(Math.random() * 100000000);
+
+  const headers = {
+    "Content-Type": "application/json",
+    "Client-Agent": HORDE_CLIENT_AGENT,
+    apikey: HORDE_API_KEY,
+  };
+
+  let lastError: unknown = null;
+  const totalDeadline = Date.now() + HORDE_MAX_WAIT_MS;
+
+  for (const model of HORDE_MODELS) {
+    if (Date.now() >= totalDeadline) break;
+    try {
+      const submitRes = await hordeRequest("/generate/async", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          prompt: opts.prompt,
+          nsfw: false,
+          censor_nsfw: true,
+          models: [model],
+          params: {
+            width,
+            height,
+            seed,
+            steps: 12,
+            cfg_scale: 4,
+            sampler_name: "k_euler",
+          },
+        }),
+      });
+      const submit = await submitRes.json().catch(() => null);
+      if (!submitRes.ok || !submit?.id) {
+        const hordeError =
+          (typeof submit?.message === "string" && submit.message) ||
+          (typeof submit?.errors === "string" && submit.errors) ||
+          `HTTP ${submitRes.status}`;
+        throw new Error(`AI Horde rejected the request (${hordeError})`);
+      }
+      const id: string = submit.id;
+
+      // Quick estimate: skip immediately if the queue is already way too long.
+      const checkRes = await hordeRequest(`/generate/check/${id}`, { headers });
+      const check = await checkRes.json().catch(() => null);
+      if (check?.is_possible === false) {
+        await hordeDelete(id);
+        throw new Error("AI Horde cannot serve anonymous requests right now.");
+      }
+      const waitSeconds = Number(check?.wait_time ?? 0);
+      const queuePosition = Number(check?.queue_position ?? 0);
+      if (waitSeconds > 45 || queuePosition > 3) {
+        await hordeDelete(id);
+        throw new Error(`AI Horde queue crowded (pos ${queuePosition}, ~${Math.round(waitSeconds)}s)`);
+      }
+
+      while (Date.now() < totalDeadline) {
+        await sleep(8000);
+        const statusRes = await hordeRequest(`/generate/status/${id}`, { headers });
+        const status = await statusRes.json().catch(() => null);
+        if (!statusRes.ok) continue;
+        if (status?.faulted === true) throw new Error("AI Horde generation faulted.");
+        if (status?.done && Array.isArray(status?.generations) && status.generations.length > 0) {
+          const g = status.generations[0];
+          if (typeof g?.img === "string" && g.img) {
+            return {
+              buffer: Buffer.from(g.img, "base64"),
+              mimeType: "image/png",
+              provider: "horde",
+              model: g.model || model,
+            };
+          }
+        }
+      }
+
+      await hordeDelete(id);
+      throw new Error("AI Horde queue too slow.");
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  throw new ProviderError(
+    "AI Horde image generation failed.",
+    "horde",
+    lastError instanceof Error ? lastError.message : String(lastError),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Provider registry + failover
 // ---------------------------------------------------------------------------
 
@@ -302,6 +504,11 @@ const providers: ImageProvider[] = [
     isConfigured: () => Boolean(TOGETHER_API_KEY),
     generate: togetherGenerate,
   },
+  // Free, community-run backup that needs no key or billing.
+  { name: "horde", isConfigured: () => true, generate: hordeGenerate },
+  // Last resort: offline dummy logo so generation never hard-fails when every
+  // remote provider is down or rate-limited.
+  { name: "local", isConfigured: () => true, generate: localGenerate },
 ];
 
 export function getConfiguredProviders(): string[] {
@@ -313,9 +520,10 @@ export async function generateImageWithFallback(opts: GenerateImageOptions): Pro
 
   for (const provider of providers) {
     if (!provider.isConfigured()) continue;
+    const started = Date.now();
     try {
       const image = await provider.generate(opts);
-      console.info(`[providers] Generated image via ${image.provider}${image.model ? ` (${image.model})` : ""}`);
+      console.info(`[providers] Generated image via ${image.provider}${image.model ? ` (${image.model})` : ""} in ${Date.now() - started}ms`);
       return image;
     } catch (e) {
       const message =
@@ -324,7 +532,7 @@ export async function generateImageWithFallback(opts: GenerateImageOptions): Pro
           : e instanceof Error
             ? e.message
             : String(e);
-      console.warn(`[providers] ${provider.name} failed: ${message}`);
+      console.warn(`[providers] ${provider.name} failed after ${Date.now() - started}ms: ${message}`);
       errors.push(`${provider.name}: ${message}`);
     }
   }

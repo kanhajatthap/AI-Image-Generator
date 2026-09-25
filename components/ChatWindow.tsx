@@ -55,8 +55,11 @@ export function ChatWindow({ messages, onSuggestion, onRetry }: ChatWindowProps)
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [sorted.length]);
+    // While a typewriter animation is revealing streamed text, follow it
+    // tightly ("auto"); for message adds use a smooth scroll.
+    const streaming = sorted.some((m) => m.streaming);
+    el.scrollTo({ top: el.scrollHeight, behavior: streaming ? "auto" : "smooth" });
+  }, [sorted]);
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950/50">

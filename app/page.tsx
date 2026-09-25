@@ -10,7 +10,6 @@ import { useTheme } from "../components/ThemeProvider";
 import { toast } from "sonner";
 import { Menu, X, Moon, Sun, BrainCircuit, LogIn, UserPlus, Search } from "lucide-react";
 
-const DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell";
 const ACTIVE_CHAT_KEY = "aig-active-chat";
 
 function uid() {
@@ -35,6 +34,70 @@ async function getErrorMessage(res: Response, fallback: string): Promise<string>
   const details = (json && typeof json.details === "string" && json.details) || "";
   const base = res.status >= 500 ? `${msg} (HTTP ${res.status})` : msg;
   return details ? `${base} — ${details}` : base;
+}
+
+type SseOutcome =
+  | { ok: true; historyId?: string; provider?: string; model?: string; duplicate?: boolean }
+  | { ok: false; error: string; details?: string };
+
+// Reads a text/event-stream response from /api/chat. Calls onDelta() with the
+// accumulated text as tokens arrive. Resolves once the stream ends.
+async function readChatSse(res: Response, onDelta: (text: string) => void): Promise<SseOutcome> {
+  if (!res.body) {
+    return { ok: false, error: "Could not read the response stream." };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let outcome: SseOutcome = { ok: true };
+
+  const handleBlock = (block: string): boolean => {
+    let event = "message";
+    let data = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data = line.slice(5).trim();
+    }
+    if (!data) return true;
+    try {
+      const json = JSON.parse(data);
+      if (event === "delta" && typeof json.text === "string") {
+        onDelta(json.text);
+      } else if (event === "error") {
+        outcome = {
+          ok: false,
+          error: typeof json.error === "string" ? json.error : "Generation failed.",
+          details: typeof json.details === "string" ? json.details : undefined,
+        };
+        return false;
+      } else if (event === "done") {
+        outcome = {
+          ok: true,
+          historyId: typeof json.historyId === "string" ? json.historyId : undefined,
+          provider: typeof json.provider === "string" ? json.provider : undefined,
+          model: typeof json.model === "string" ? json.model : undefined,
+          duplicate: json.duplicate === true,
+        };
+      }
+    } catch {
+      // Ignore malformed data lines.
+    }
+    return true;
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      if (!handleBlock(block)) return outcome;
+    }
+  }
+  if (buffer.trim()) handleBlock(buffer);
+  return outcome;
 }
 
 // Flatten the visible chat into prior user/assistant turns so the AI can
@@ -255,6 +318,7 @@ export default function Home() {
 
   const markError = (content: string, retryPrompt?: string) => ({
     typing: false,
+    streaming: false,
     content,
     isError: true,
     ...(retryPrompt ? { retryPrompt } : {}),
@@ -270,21 +334,30 @@ export default function Home() {
   };
 
   const enhancePrompt = async (prompt: string): Promise<string> => {
-    const res = await fetch(`/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: `Enhance this image generation prompt to be more detailed and descriptive, add artistic details and lighting information. Original prompt: "${prompt}". Return only the enhanced prompt text without any explanations.`,
-        model: DEFAULT_MODEL,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: `Expand and enrich this prompt so it produces better results — add more detail, style, lighting and mood. Return only the enhanced prompt text with no commentary or quotes. Original prompt: "${prompt}"`,
+          forceText: true,
+        }),
+      });
+    } catch {
+      throw new Error("Could not reach the server. Check your internet connection and try again.");
+    }
 
     if (!res.ok) {
-      throw new Error("Failed to enhance prompt");
+      const errText = await getErrorMessage(res, "Failed to enhance the prompt.");
+      throw new Error(errText);
     }
 
     const json = await res.json();
-    return json.text || prompt;
+    if (json?.type === "text" && typeof json.text === "string" && json.text.trim()) {
+      return json.text.trim();
+    }
+    throw new Error(json?.error || "The enhancer returned an unexpected response. Please try again.");
   };
 
   const sendPrompt = async (options: PromptInputOptions) => {
@@ -427,11 +500,17 @@ try {
               method: "POST",
               body: formData,
             });
-          } else {
+} else {
             res = await fetch("/api/chat", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ prompt, history: buildHistory(messages), historyId: activeHistoryId || undefined }),
+              body: JSON.stringify({
+                prompt,
+                history: buildHistory(messages),
+                historyId: activeHistoryId || undefined,
+                stream: true,
+                textModel: options.textModel || "auto",
+              }),
             });
           }
         } catch {
@@ -442,6 +521,7 @@ try {
                 : m,
             ),
           );
+          toast.error("Could not reach the server. Please try again.");
           return;
         }
 
@@ -456,6 +536,7 @@ try {
                   : m,
               ),
             );
+            toast.error("Rate limit reached. Please wait 15 seconds before trying again.");
             // Clear cooldown after 15 seconds
             setTimeout(() => setRateLimitUntil(null), cooldownMs);
             return;
@@ -465,6 +546,48 @@ try {
           setMessages((prev) =>
             prev.map((m) => (m.id === typingMsg.id ? { ...m, ...markError(errText, prompt) } : m)),
           );
+          toast.error(errText);
+          return;
+        }
+
+        // Streaming text responses come back as text/event-stream; everything
+        // else (image / vision / variations) remains a JSON response.
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("text/event-stream")) {
+          let streamed = "";
+          const outcome = await readChatSse(res, (text) => {
+            streamed = text;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === typingMsg.id
+                  ? { ...m, typing: false, streaming: true, type: "text", content: streamed }
+                  : m,
+              ),
+            );
+          });
+
+          if (!outcome.ok) {
+            const errText = outcome.details ? `${outcome.error} — ${outcome.details}` : outcome.error;
+            setMessages((prev) => prev.map((m) => (m.id === typingMsg.id ? { ...m, ...markError(errText, prompt) } : m)));
+            toast.error(outcome.error);
+            return;
+          }
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === typingMsg.id
+                ? { ...m, typing: false, streaming: false, type: "text", content: streamed, historyId: outcome.historyId }
+                : m,
+            ),
+          );
+          if (outcome.historyId) {
+            setActiveHistoryId(outcome.historyId);
+            localStorage.setItem(ACTIVE_CHAT_KEY, outcome.historyId);
+          }
+          if (outcome.duplicate) {
+            toast.info("You've asked this before — try adding more detail for a new angle?");
+          }
+          await loadHistoryList();
           return;
         }
 
@@ -506,6 +629,9 @@ try {
             m.id === typingMsg.id ? { ...m, typing: false, type: "text", content: json.text, historyId: json.historyId } : m,
           ),
         );
+        if (json.duplicate === true) {
+          toast.info("You've asked this before — try adding more detail for a new angle?");
+        }
       } else if (json.type === "variations") {
         // Display variations grid - don't set imageUrl to avoid loading issues
         setMessages((prev) =>

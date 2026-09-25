@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../../lib/mongodb";
 import { createSessionToken, SESSION_COOKIE_NAME } from "../../../../lib/session";
+import { checkRateLimit } from "../../../../lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,17 @@ export async function POST(req: Request) {
 
   try {
     const db = await getDb();
+
+    // One signup per IP per window (via X-Forwarded-For) to stop abuse.
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    const signupLimit = checkRateLimit(`signup:${ip}`);
+    if (!signupLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many signups from this address. Please wait and try again.", retryAfter: signupLimit.retryAfter },
+        { status: 429 },
+      );
+    }
+
     const users = db.collection("users");
     await users.createIndex({ email: 1 }, { unique: true });
 

@@ -8,6 +8,8 @@ import { getCachedImage, setCachedImage } from "../../../lib/cache";
 import { addWatermark } from "../../../lib/watermark";
 import { buildImageUrl, PollinationsError, fetchPollinationsText, POLLINATIONS_TEXT_BASE } from "../../../lib/pollinations";
 import { generateImageWithFallback, getConfiguredProviders, ProviderError } from "../../../lib/providers";
+import { QuotaExceededError, spendQuota } from "../../../lib/quota";
+import { quotaErrorResponse } from "../../../lib/httpError";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +99,14 @@ export async function POST(req: Request) {
       let contentType: string;
       let imageUrl: string;
       let usedProvider: string;
+
+      const dbForQuota = await getDb();
+      try {
+        await spendQuota(dbForQuota, session.userId, "image", 1);
+      } catch (quotaErr) {
+        if (quotaErr instanceof QuotaExceededError) return quotaErrorResponse(quotaErr);
+        throw quotaErr;
+      }
 
       if (cached) {
         imageBuffer = Buffer.from(cached.data, "base64") as Buffer;
@@ -199,9 +209,17 @@ export async function POST(req: Request) {
 
     } else {
       const textUrl = `${POLLINATIONS_TEXT_BASE}/${encodedPrompt}`;
-      const generatedText = await fetchPollinationsText(textUrl);
 
       const db = await getDb();
+      try {
+        await spendQuota(db, session.userId, "text", 1);
+      } catch (quotaErr) {
+        if (quotaErr instanceof QuotaExceededError) return quotaErrorResponse(quotaErr);
+        throw quotaErr;
+      }
+
+      const generatedText = await fetchPollinationsText(textUrl);
+
       const history = db.collection("image_history");
       await history.createIndex({ userId: 1, createdAt: -1 });
 

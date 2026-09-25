@@ -8,6 +8,7 @@ import {
   Boxes,
   Braces,
   CheckCircle2,
+  Coins,
   Copy,
   Cpu,
   Database,
@@ -117,9 +118,9 @@ const STACK = [
     title: "AI & Media",
     accent: "from-sky-500 to-cyan-600",
     items: [
-      { name: "Gemini API", detail: "text streaming (gemini-3.1-flash-lite) + image gen" },
+      { name: "Gemini API", detail: "text streaming · image gen · vision (understands uploaded images)" },
       { name: "Pollinations AI", detail: "image + text fallback endpoints" },
-      { name: "OCR.space", detail: "Extract text from uploaded images" },
+      { name: "OCR.space", detail: "Text-extraction fallback when Gemini vision is unavailable" },
       { name: "sharp", detail: "Image processing + SVG watermark overlay" },
     ],
   },
@@ -142,6 +143,7 @@ const STACK = [
       { name: "Sliding-window rate limiter", detail: "20 requests / minute per user, LRU-evicted buckets" },
       { name: "Provider circuit breaker", detail: "Skip dead providers, explicit 'Tried: …' errors" },
       { name: "Blur-up placeholders", detail: "Lazy image loading + shimmer" },
+      { name: "Daily free credits", detail: "5 images + 30 chat asks / day, MongoDB-backed, reset 5:30 AM IST" },
     ],
   },
 ];
@@ -158,29 +160,35 @@ const FLOW = [
     detail: "Every request verifies the httpOnly JWT session cookie (jose HS256, 7-day expiry).",
   },
   {
+    icon: Coins,
+    title: "3 · Charge daily credit",
+    detail: "One image credit — or one chat credit for text/vision — is spent from the user's daily bucket (stored in MongoDB). When it's empty the API replies 429 with the exact refill time (5:30 AM IST).",
+  },
+  {
     icon: Waypoints,
-    title: "3 · Route the intent",
-    detail: "The server detects the request type: image keywords → image, uploaded image → vision/OCR, 'similar' → variations, otherwise → text.",
+    title: "4 · Route the intent",
+    detail: "The server detects the request type: image keywords → image, uploaded image → vision (Gemini first, OCR fallback), 'similar' → variations, otherwise → text.",
   },
   {
     icon: Cpu,
-    title: "4 · Call the provider chain",
+    title: "5 · Call the provider chain",
     detail: "Text: Gemini streams via SSE (with a Pollinations fallback that detects provider errors). Image: Pollinations → Gemini → Hugging Face → Together → Horde with a circuit breaker.",
   },
   {
     icon: Database,
-    title: "5 · Persist",
+    title: "6 · Persist",
     detail: "Result is base64-stored in MongoDB image_history (with prompt, model, mimeType, seed, messages).",
   },
   {
     icon: Sparkles,
-    title: "6 · Render",
+    title: "7 · Render",
     detail: "Text types out with a blinking cursor then swaps to rendered Markdown; images fade in with a blur-up, both with copy/download actions.",
   },
 ];
 
 const WORKFLOW_PIPELINE = [
   { name: "Intake", detail: "Client POST → Route Handler → session verify" },
+  { name: "Quota", detail: "Spend Mongo-backed daily credit (5 img / 30 chat), reset 5:30 AM IST" },
   { name: "Intent", detail: "isImageGenerationRequest() keyword classifier" },
   { name: "Generate", detail: "Gemini → Pollinations chain, circuit breaker" },
   { name: "Enrich", detail: "Watermark (sharp), LRU cache, metadata" },
@@ -198,6 +206,7 @@ const DATABASE = [
       { field: "name", type: "string", desc: "Display name" },
       { field: "email", type: "string", desc: "Unique index, lowercase" },
       { field: "passwordHash", type: "string", desc: "bcrypt, 10 rounds" },
+      { field: "memory", type: "string[]", desc: "Cross-chat assistant memory (name, facts)" },
       { field: "createdAt / updatedAt", type: "date", desc: "Timestamps" },
     ],
   },
@@ -220,6 +229,18 @@ const DATABASE = [
       { field: "createdAt / updatedAt", type: "date", desc: "Timestamps" },
     ],
   },
+  {
+    name: "quotas",
+    icon: Coins,
+    note: "Daily free credits, one doc per user per UTC day",
+    indexes: "Indexes: { userId: 1, day: 1 } unique",
+    fields: [
+      { field: "userId / day", type: "string", desc: "Owner + period key (e.g. 2026-09-25)" },
+      { field: "images", type: "number", desc: "Images used today (5/day cap)" },
+      { field: "text", type: "number", desc: "Chat credits used today (30/day cap)" },
+      { field: "createdAt / updatedAt", type: "date", desc: "Timestamps" },
+    ],
+  },
 ];
 
 const API = [
@@ -231,6 +252,9 @@ const API = [
   { method: "POST", path: "/api/generate", desc: "Generate with settings + watermark + cache", auth: true },
   { method: "POST", path: "/api/batch-generate", desc: "Generate 1–8 images in parallel", auth: true },
   { method: "POST", path: "/api/variations", desc: "N variations with distinct seeds", auth: true },
+  { method: "GET", path: "/api/quota", desc: "Daily credits remaining + next reset time", auth: true },
+  { method: "POST", path: "/api/text", desc: "Dedicated chat/text endpoint (SSE or JSON)", auth: true },
+  { method: "POST", path: "/api/vision", desc: "Understand an uploaded image (Gemini vision / OCR)", auth: true },
   { method: "GET", path: "/api/explore", desc: "Public gallery: search · sort · paginate", auth: false },
   { method: "GET", path: "/api/history", desc: "List user history (pinned first)", auth: true },
   { method: "POST", path: "/api/history", desc: "Manually save an image", auth: true },
@@ -239,6 +263,9 @@ const API = [
   { method: "GET", path: "/api/history/:id", desc: "Single history detail", auth: true },
   { method: "GET", path: "/api/history/:id/image", desc: "Raw image bytes (owner or public)", auth: false },
   { method: "GET", path: "/api/prompt-history", desc: "Recent unique prompts (autocomplete)", auth: true },
+  { method: "GET", path: "/api/memory", desc: "List cross-chat assistant memory facts", auth: true },
+  { method: "POST", path: "/api/memory", desc: "Add a memory fact", auth: true },
+  { method: "DELETE", path: "/api/memory", desc: "Remove a memory fact", auth: true },
   { method: "GET", path: "/api/test", desc: "Health check: { test: 'API working' }", auth: false },
 ];
 
@@ -305,12 +332,12 @@ const FEATURES = [
   {
     icon: MessageSquare,
     title: "AI chat (text)",
-    items: ["SSE streaming + typewriter with blinking cursor", "Rendered Markdown (headings, lists, code)", "Model picker: Auto · Gemini · Pollinations"],
+    items: ["SSE streaming + typewriter with blinking cursor", "Rendered Markdown (headings, lists, code)", "Model picker: Auto · Gemini · Pollinations", "Cross-chat memory — remembers your name & facts", "Daily free credits — live counter in the header"],
   },
   {
     icon: ScanText,
     title: "Vision / OCR",
-    items: ["Upload any image", "OCR.space extracts the text", "Saved as vision chat history"],
+    items: ["Upload any image", "Gemini understands it — describe / ask questions", "OCR.space fallback extracts the text", "Saved as vision chat history"],
   },
   {
     icon: Layers,
@@ -354,7 +381,10 @@ const ENV = [
   { name: "SESSION_SECRET", required: true, detail: "Secret used to sign JWTs" },
   { name: "GEMINI_API_KEY", required: true, detail: "Key for Gemini text streaming + image generation" },
   { name: "GEMINI_TEXT_MODEL", required: false, detail: "Text model id (default: gemini-3.1-flash-lite)" },
-  { name: "OCR_SPACE_API_KEY", required: true, detail: "Key for the vision / OCR feature" },
+  { name: "GEMINI_VISION_MODEL", required: false, detail: "Vision model id (default: gemini-3.1-flash-lite)" },
+  { name: "FREE_IMAGE_CREDITS", required: false, detail: "Daily image limit (default: 5)" },
+  { name: "FREE_TEXT_CREDITS", required: false, detail: "Daily chat limit (default: 30)" },
+  { name: "OCR_SPACE_API_KEY", required: false, detail: "Key for the OCR fallback when Gemini vision is unavailable" },
 ];
 
 const COMMANDS = [
@@ -376,8 +406,8 @@ const COMPONENT_TREE = [
   { level: 1, name: "app/history", detail: "Personal library · lightbox · regenerate actions" },
   { level: 1, name: "app/settings · login · signup", detail: "Preference, auth pages with password strength" },
   { level: 1, name: "components/ui", detail: "Lightbox · BlurImage · GenerationStages · GlobalPalette · ThemeProvider" },
-  { level: 0, name: "lib/", detail: "text · pollinations · providers · session · mongodb · rateLimit · lruCache · bloomFilter · cache · watermark · utils" },
-  { level: 0, name: "app/api/", detail: "14 route handlers across auth, chat, gallery, history" },
+  { level: 0, name: "lib/", detail: "chat · text · vision · memory · quota · httpError · pollinations · providers · session · mongodb · rateLimit · lruCache · bloomFilter · cache · watermark · utils" },
+  { level: 0, name: "app/api/", detail: "18 route handlers across auth, chat, credit, gallery, history" },
 ];
 
 const METHOD_COLOR: Record<string, string> = {
@@ -526,6 +556,7 @@ export default function AboutPage() {
                 <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
                   <li>· Generate AI images from a text prompt via Pollinations</li>
                   <li>· Ask questions and get streaming AI text answers — typewriter + rendered Markdown</li>
+                  <li>· Personality memory: tell it your name once, every chat remembers it</li>
                   <li>· Upload an image to run OCR — the extracted text comes back as an answer</li>
                   <li>· Batch-generate 1–8 images, create variations, and download results</li>
                 </ul>

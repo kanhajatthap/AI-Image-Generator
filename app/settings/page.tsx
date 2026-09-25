@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "../../components/ThemeProvider";
 import { PageHeader } from "../../components/PageHeader";
 import { PageTransition } from "../../components/PageTransition";
-import { Moon, Sun, Palette, Type, SlidersHorizontal } from "lucide-react";
+import { Brain, Moon, Palette, Sun, Trash2, Type, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 
 const SIZE_OPTIONS = [
@@ -27,6 +27,45 @@ export default function SettingsPage() {
     if (typeof window === "undefined") return "flux";
     return localStorage.getItem("defaultModel") ?? "flux";
   });
+
+  const [memory, setMemory] = useState<string[]>([]);
+  const [loadingMemory, setLoadingMemory] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/memory")
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        if (!alive) return;
+        setMemory(Array.isArray(data.memory) ? data.memory : []);
+        setLoadingMemory(false);
+      })
+      .catch(() => {
+        if (alive) setLoadingMemory(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const removeFact = async (fact: string) => {
+    try {
+      const res = await fetch("/api/memory", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fact }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMemory(Array.isArray(data.memory) ? data.memory : []);
+        toast.success("Memory removed.");
+      } else {
+        toast.error(data.error || "Could not remove memory.");
+      }
+    } catch {
+      toast.error("Could not remove memory.");
+    }
+  };
 
   const saveSize = (label: string) => {
     setDefaultSize(label);
@@ -156,6 +195,48 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Assistant Memory */}
+          <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
+              <Brain className="h-4 w-4 text-indigo-500" />
+              <h2 className="font-heading text-sm font-semibold text-zinc-800 dark:text-zinc-100">Assistant Memory</h2>
+            </div>
+            <div className="space-y-4 p-5">
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                Facts I automatically remember from your chats and reuse in{" "}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">every chat</span> — your name,
+                family, city, preferences. Tell me anything in any chat and I will keep it in mind; no manual
+                saving needed. Delete a fact here whenever you want it gone.
+              </p>
+              {loadingMemory ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
+              ) : memory.length === 0 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Nothing remembered yet — tell me something in any chat and I will keep it in mind.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {memory.map((fact) => (
+                    <li
+                      key={fact}
+                      className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-950/40"
+                    >
+                      <span className="text-sm text-zinc-700 dark:text-zinc-300">{fact}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeFact(fact)}
+                        aria-label={`Remove ${fact}`}
+                        className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-500"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
           {/* About */}
           <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-center gap-2 border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
@@ -169,7 +250,7 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-zinc-600 dark:text-zinc-400">Engine</span>
-                <span className="font-medium text-zinc-900 dark:text-zinc-100">Pollinations AI</span>
+                <span className="font-medium text-zinc-900 dark:text-zinc-100">Gemini + Pollinations</span>
               </div>
             </div>
           </section>

@@ -8,9 +8,16 @@ import type { ChatMessageModel, Variation } from "../components/ChatMessage";
 import { PromptInput, type PromptInputHandle, PromptInputOptions } from "../components/PromptInput";
 import { useTheme } from "../components/ThemeProvider";
 import { toast } from "sonner";
-import { Menu, X, Moon, Sun, BrainCircuit, LogIn, UserPlus, Search } from "lucide-react";
+import { Menu, X, Moon, Sun, BrainCircuit, LogIn, UserPlus, Search, Images, MessageSquare } from "lucide-react";
 
 const ACTIVE_CHAT_KEY = "aig-active-chat";
+
+type QuotaOverview = {
+  image: { limit: number; used: number; remaining: number };
+  text: { limit: number; used: number; remaining: number };
+  resetAt: string;
+  resetLabel: string;
+};
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -122,11 +129,26 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [rateLimitUntil, setRateLimitUntil] = useState<number | null>(null);
   const [authUser, setAuthUser] = useState<{ name: string; email: string } | null>(null);
+  const [quota, setQuota] = useState<QuotaOverview | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const promptInputRef = useRef<PromptInputHandle>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
 
   const isLoggedIn = !!authUser;
+
+  const loadQuota = async () => {
+    try {
+      const res = await fetch("/api/quota", { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        setQuota(json?.image && json?.text ? json : null);
+      } else {
+        setQuota(null);
+      }
+    } catch {
+      setQuota(null);
+    }
+  };
 
   const loadUser = async () => {
     const res = await fetch("/api/auth/me", { cache: "no-store" });
@@ -166,6 +188,7 @@ export default function Home() {
     const restore = async () => {
       await loadUser();
       loadHistoryList();
+      loadQuota();
       // Reopen the chat that was active before the refresh, like ChatGPT does.
       const stored = localStorage.getItem(ACTIVE_CHAT_KEY);
       if (stored) openHistory(stored);
@@ -313,8 +336,12 @@ export default function Home() {
   const canSend = useMemo(() => {
     const now = Date.now();
     const isRateLimited = rateLimitUntil !== null && now < rateLimitUntil;
-    return isLoggedIn && !busy && !isRateLimited;
-  }, [isLoggedIn, busy, rateLimitUntil]);
+    // Block only when BOTH credits are gone — one empty bucket still lets the
+    // other mode work.
+    const allExhausted =
+      quota !== null && quota.image.remaining === 0 && quota.text.remaining === 0;
+    return isLoggedIn && !busy && !isRateLimited && !allExhausted;
+  }, [isLoggedIn, busy, rateLimitUntil, quota]);
 
   const markError = (content: string, retryPrompt?: string) => ({
     typing: false,
@@ -465,6 +492,7 @@ export default function Home() {
         await loadHistoryList();
       } finally {
         setBusy(false);
+        loadQuota();
       }
       return;
     }
@@ -527,6 +555,21 @@ try {
 
         if (!res.ok) {
           if (res.status === 429) {
+            const json = await res.json().catch(() => null);
+            // Daily credits are over — tell them exactly when they reset.
+            if (json && json.quotaExceeded) {
+              const msg = typeof json.error === "string" ? json.error : "Daily credits exhausted.";
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === typingMsg.id
+                    ? { ...m, typing: false, content: msg }
+                    : m,
+                ),
+              );
+              toast.error(msg);
+              await loadQuota();
+              return;
+            }
             const cooldownMs = 15000; // 15 seconds
             setRateLimitUntil(Date.now() + cooldownMs);
             setMessages((prev) =>
@@ -656,12 +699,14 @@ try {
       await loadHistoryList();
     } finally {
       setBusy(false);
+      loadQuota();
     }
   };
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setAuthUser(null);
+    setQuota(null);
     newChat();
     toast.success("Logged out");
   };
@@ -766,6 +811,29 @@ const useSuggestion = (prompt: string) => {
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </button>
 
+              {quota && isLoggedIn && (
+                <div
+                  className="hidden items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-600 sm:flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                  title={`Daily credits reset: ${quota.resetLabel} (IST)`}
+                >
+                  <span
+                    className={`flex items-center gap-1 ${quota.image.remaining === 0 ? "text-red-500" : ""}`}
+                    title="Image credits remaining today"
+                  >
+                    <Images className="h-3.5 w-3.5" />
+                    {quota.image.remaining}/{quota.image.limit}
+                  </span>
+                  <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                  <span
+                    className={`flex items-center gap-1 ${quota.text.remaining === 0 ? "text-red-500" : ""}`}
+                    title="Chat credits remaining today"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {quota.text.remaining}/{quota.text.limit}
+                  </span>
+                </div>
+              )}
+
               {!authUser && (
                 <div className="ml-2 hidden items-center gap-2 sm:flex">
                   <Link
@@ -788,6 +856,12 @@ const useSuggestion = (prompt: string) => {
           </header>
 
           <ChatWindow messages={messages} onSuggestion={useSuggestion} onRetry={handleRetry} />
+
+          {quota && isLoggedIn && (quota.image.remaining === 0 || quota.text.remaining === 0) && (
+            <div className="border-b border-amber-200/70 bg-amber-50/80 px-6 py-2 text-center text-xs font-medium text-amber-800 backdrop-blur-sm dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+              Aaj ke free credits khatam ho gaye — naye credits {quota.resetLabel} (IST) ko milenge.
+            </div>
+          )}
 
           <PromptInput
             ref={promptInputRef}

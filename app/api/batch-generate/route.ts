@@ -5,6 +5,9 @@ import { getDb } from "../../../lib/mongodb";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
 import { PollinationsError } from "../../../lib/pollinations";
 import { generateImageWithFallback, ProviderError } from "../../../lib/providers";
+import { checkRateLimit } from "../../../lib/rateLimit";
+import { QuotaExceededError, spendQuota } from "../../../lib/quota";
+import { quotaErrorResponse } from "../../../lib/httpError";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +36,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Please login to generate." }, { status: 401 });
     }
 
+    const rateLimit = checkRateLimit(session.userId);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Please wait before trying again.", retryAfter: rateLimit.retryAfter },
+        { status: 429 },
+      );
+    }
+
+    // Reserve daily credits up front — a batch of N images costs N credits.
+    const db = await getDb();
+    try {
+      await spendQuota(db, session.userId, "image", count);
+    } catch (quotaErr) {
+      if (quotaErr instanceof QuotaExceededError) return quotaErrorResponse(quotaErr);
+      throw quotaErr;
+    }
+
     const stylePrompt = style && style !== "none" ? `${prompt}, ${style} style, highly detailed` : prompt;
 
     const generateOne = async (seed: number) => {
@@ -50,7 +70,6 @@ export async function POST(req: Request) {
     const seeds = Array.from({ length: count }, () => Math.floor(Math.random() * 10000000));
     const results = await Promise.all(seeds.map((seed) => generateOne(seed)));
 
-    const db = await getDb();
     const history = db.collection("image_history");
 
     // Resolve the conversation id so follow-up batches stay in the same chat.

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "../../../lib/session";
+import { getDb } from "../../../lib/mongodb";
+import { QuotaExceededError, spendQuota } from "../../../lib/quota";
+import { quotaErrorResponse } from "../../../lib/httpError";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +37,15 @@ export async function POST(req: Request) {
     
     if (!userId) {
       return NextResponse.json({ error: "Please login to generate variations." }, { status: 401 });
+    }
+
+    // Daily image credits: each variation is one generated image.
+    const db = await getDb();
+    try {
+      await spendQuota(db, userId, "image", variationCount);
+    } catch (quotaErr) {
+      if (quotaErr instanceof QuotaExceededError) return quotaErrorResponse(quotaErr);
+      throw quotaErr;
     }
 
     // Build prompt for variations - include reference to original style

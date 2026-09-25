@@ -54,6 +54,7 @@ function buildGeminiContents(history: TextHistoryMessage[], latest: string): unk
 async function* geminiTextStream(
   prompt: string,
   history: TextHistoryMessage[],
+  systemPrompt: string = TEXT_SYSTEM_PROMPT,
 ): AsyncGenerator<TextStreamEvent> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new TextProviderError("Gemini is not configured.", "gemini");
@@ -68,7 +69,7 @@ async function* geminiTextStream(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: TEXT_SYSTEM_PROMPT }] },
+          systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: buildGeminiContents(history, prompt),
           generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
         }),
@@ -154,9 +155,10 @@ async function* geminiTextStream(
 async function* pollinationsTextStream(
   prompt: string,
   history: TextHistoryMessage[],
+  systemPrompt: string = TEXT_SYSTEM_PROMPT,
 ): AsyncGenerator<TextStreamEvent> {
   const messages = [
-    { role: "system" as const, content: TEXT_SYSTEM_PROMPT },
+    { role: "system" as const, content: systemPrompt },
     ...history.slice(-24),
     { role: "user" as const, content: prompt },
   ];
@@ -184,12 +186,12 @@ const SERVICE_ERROR_HINTS = [
   "api key",
 ];
 
-function looksLikeServiceError(text: string): boolean {
+export function looksLikeServiceError(text: string): boolean {
   const lower = text.toLowerCase();
   return SERVICE_ERROR_HINTS.some((hint) => lower.includes(hint));
 }
 
-function cleanResponse(raw: string): string {
+export function cleanResponse(raw: string): string {
   let text = raw.trim();
   try {
     const parsed = JSON.parse(text);
@@ -225,10 +227,15 @@ interface TextStreamChoice {
   run: () => AsyncGenerator<TextStreamEvent>;
 }
 
-function buildChoices(prompt: string, history: TextHistoryMessage[], preferred: TextProvider): TextStreamChoice[] {
+function buildChoices(
+  prompt: string,
+  history: TextHistoryMessage[],
+  preferred: TextProvider,
+  systemPrompt: string,
+): TextStreamChoice[] {
   const auto: TextStreamChoice[] = [
-    { name: "gemini", run: () => geminiTextStream(prompt, history) },
-    { name: "pollinations", run: () => pollinationsTextStream(prompt, history) },
+    { name: "gemini", run: () => geminiTextStream(prompt, history, systemPrompt) },
+    { name: "pollinations", run: () => pollinationsTextStream(prompt, history, systemPrompt) },
   ];
   if (preferred === "gemini") return [auto[0]];
   if (preferred === "pollinations") return [auto[1]];
@@ -241,8 +248,9 @@ export async function* generateTextStream(
   prompt: string,
   history: TextHistoryMessage[],
   preferred: TextProvider = "auto",
+  systemPrompt: string = TEXT_SYSTEM_PROMPT,
 ): AsyncGenerator<TextStreamEvent> {
-  const choices = buildChoices(prompt, history, preferred);
+  const choices = buildChoices(prompt, history, preferred, systemPrompt);
   const attempted: string[] = [];
 
   for (const choice of choices) {
@@ -275,9 +283,10 @@ export async function generateTextWithFallback(
   prompt: string,
   history: TextHistoryMessage[],
   preferred: TextProvider = "auto",
+  systemPrompt: string = TEXT_SYSTEM_PROMPT,
 ): Promise<GeneratedText> {
   let result: GeneratedText = { text: "", provider: "unknown", model: "" };
-  for await (const ev of generateTextStream(prompt, history, preferred)) {
+  for await (const ev of generateTextStream(prompt, history, preferred, systemPrompt)) {
     if (ev.kind === "done") {
       result = { text: ev.text, provider: ev.provider, model: ev.model };
     }
